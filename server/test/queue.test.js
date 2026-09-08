@@ -257,3 +257,34 @@ test('播放端 error 事件 → toast 播放错误，已自动跳过', async ()
   assert.equal(history.records[0].status, 'skipped');
   assert.equal(history.records[0].updates.at(-1).reason, '播放错误');
 });
+
+test('播放端替换后重发当前歌 play', async () => {
+  const { j, events } = setup();
+  j.playerHello(); // 第一个播放端上线
+  j.addToQueue(song('晴天'));
+  await flush(); // 等 URL 解析完成、play 指令发出
+  const firstPlay = events.find((e) => e[0] === 'player' && e[1].action === 'play');
+  assert.ok(firstPlay, '应发出 play 指令');
+  assert.equal(firstPlay[1].url, 'http://example.com/a.mp3'); // current.url 已解析
+  const before = j.getState().current;
+  events.length = 0; // 清空记录，模拟旧连接已不可达、新连接接管
+
+  j.playerHello(); // 新播放端接管：重发当前歌
+  const cmds = events.filter((e) => e[0] === 'player');
+  assert.deepEqual(cmds.map((c) => c[1].action), ['volume', 'mute', 'play']);
+  assert.deepEqual(cmds[2][1], {
+    action: 'play',
+    url: 'http://example.com/a.mp3',
+    song: song('晴天'),
+    volume: j.getState().volume,
+    muted: j.getState().muted,
+  });
+  assert.deepEqual(j.getState().current, before); // 当前歌不变
+
+  // 暂停语义：接管时若处于暂停，重发 play 之后补发 pause
+  j.pause();
+  events.length = 0;
+  j.playerHello();
+  const cmds2 = events.filter((e) => e[0] === 'player');
+  assert.deepEqual(cmds2.map((c) => c[1].action), ['volume', 'mute', 'play', 'pause']);
+});

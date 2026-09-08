@@ -140,8 +140,15 @@ function createJukebox(deps) {
     state.playerOnline = true;
     send({ action: 'volume', value: state.volume });
     send({ action: 'mute', value: state.muted });
-    if (!state.current) playNext();
-    else broadcast();
+    if (!state.current) { playNext(); return; }
+    if (state.current.url) {                       // URL 已解析：重发给新播放端
+      state.current.started_at = now();            // 进度/歌词从新起点算
+      history.update(state.current.historyId, { started_at: state.current.started_at });
+      send({ action: 'play', url: state.current.url, song: state.current.song,
+             volume: state.volume, muted: state.muted });
+      if (state.paused) send({ action: 'pause' }); // 保住暂停语义
+    }
+    broadcast();
   }
 
   function playerGone() {
