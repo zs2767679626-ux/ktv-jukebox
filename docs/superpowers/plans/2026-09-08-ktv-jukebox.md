@@ -572,7 +572,7 @@ test('歌曲播完自动播下一首，历史记为 played', async () => {
 });
 
 test('版权受限：自动跳过并播下一首，历史记 reason', async () => {
-  const { j, history } = setup({ resolveUrl: async () => ({ error: 'vip' }) });
+  const { j, history } = setup({ resolveUrl: async (song) => (song.title === 'A' ? { error: 'vip' } : { url: `http://example.com/${song.title}.mp3` }) });
   j.playerHello();
   j.addToQueue(song('A'));
   j.addToQueue(song('B'));
@@ -593,8 +593,11 @@ test('音量：钳制到 0-100 并发指令给播放端', () => {
   assert.equal(v.at(-1)[1].value, 42);
 });
 
-test('暂停/恢复/静音切换', () => {
+test('暂停/恢复/静音切换', async () => {
   const { j, events } = setup();
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush();
   j.pause();
   assert.equal(j.getState().paused, true);
   assert.ok(events.some((e) => e[1].action === 'pause'));
@@ -614,11 +617,13 @@ test('置顶把队列项移到队首（不打断当前），删除记录 skipped
   j.addToQueue(song('C'));
   await flush();
   const state = j.getState();
-  j.topQueue(state.queue[1].id); // B 置顶
-  assert.equal(j.getState().queue[0].song.title, 'B');
-  j.removeQueue(j.getState().queue[0].id);
+  j.topQueue(state.queue[1].id); // C 置顶：验证真正搬移（队尾→队首）
   assert.equal(j.getState().queue[0].song.title, 'C');
-  const removed = history.records.find((r) => r.song.title === 'B');
+  assert.equal(j.getState().queue[1].song.title, 'B');
+  assert.equal(j.getState().current.song.title, 'A'); // 不打断当前
+  j.removeQueue(j.getState().queue[0].id);
+  assert.equal(j.getState().queue[0].song.title, 'B');
+  const removed = history.records.find((r) => r.song.title === 'C');
   assert.equal(removed.status, 'skipped');
   assert.equal(removed.updates.at(-1).reason, '被移除');
 });
@@ -857,7 +862,7 @@ module.exports = { createJukebox };
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
-Expected: 全部 PASS（store 4 个 + queue 14 个）
+Expected: 全部 PASS（store 4 个 + queue 13 个）
 
 - [ ] **Step 5: 提交**
 
