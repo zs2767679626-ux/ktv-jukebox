@@ -80,3 +80,64 @@ class VirtualPlayer(BasePlayer):
             self._end_at = None
             return 'finished'
         return None
+
+
+class MpvPlayer(BasePlayer):
+    """基于 python-mpv 的真实播放器。libmpv 需已安装（README/setup 脚本有步骤）。"""
+
+    def __init__(self, libmpv=None):
+        import mpv
+        try:
+            kwargs = {'ytdl': False, 'input_default_bindings': False, 'input_vo_keyboard': False}
+            if libmpv:
+                kwargs['libmpv'] = libmpv
+            self.mpv = mpv.MPV(**kwargs)
+        except OSError as e:
+            raise RuntimeError(f'找不到 libmpv，请先安装 mpv（见 README）：{e}')
+        self._loaded = False
+
+    async def play(self, url, volume, muted):
+        self.mpv.loadfile(url)
+        self._loaded = True
+        self.mpv.volume = int(volume)
+        self.mpv.mute = bool(muted)
+
+    async def pause(self):
+        self.mpv.pause = True
+
+    async def resume(self):
+        self.mpv.pause = False
+
+    async def stop(self):
+        self._loaded = False
+        self.mpv.command('stop')
+
+    async def set_volume(self, v):
+        self.mpv.volume = int(v)
+
+    async def set_mute(self, m):
+        self.mpv.mute = bool(m)
+
+    async def wait_event(self, timeout=0.5):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            await asyncio.sleep(0.2)
+            if self._loaded:
+                if self.mpv.eof_reached:
+                    self._loaded = False
+                    return 'finished'
+                if self.mpv.core_idle:
+                    # 载入后回到 idle：加载失败/地址失效
+                    self._loaded = False
+                    return 'error'
+        return None
+
+    def audio_device(self):
+        """当前音频设备名（蓝牙掉线检测用；平台不支持时返回 None）。"""
+        try:
+            return self.mpv.audio_device
+        except Exception:
+            return None
+
+    async def close(self):
+        self.mpv.terminate()

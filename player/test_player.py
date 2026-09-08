@@ -36,5 +36,37 @@ class TestConfig(unittest.TestCase):
         self.assertFalse(cfg['virtual'])
 
 
+class TestMpvPlayer(unittest.TestCase):
+    def test_libmpv_path_passed_and_oserror_wrapped(self):
+        import sys
+        from unittest import mock
+        from playback import MpvPlayer
+
+        # 场景 1：libmpv 路径传给 MPV 构造器，且禁用 ytdl
+        fake = mock.Mock()
+        fake.MPV.return_value = mock.Mock(
+            volume=0, mute=False, pause=False, eof_reached=False, core_idle=False)
+        with mock.patch.dict(sys.modules, {'mpv': fake}):
+            p = MpvPlayer('/opt/mpv/libmpv.dylib')
+            kwargs = fake.MPV.call_args.kwargs
+            self.assertEqual(kwargs.get('libmpv'), '/opt/mpv/libmpv.dylib')
+            self.assertFalse(kwargs['ytdl'])
+            self.assertIs(p.mpv, fake.MPV.return_value)
+
+        # 场景 2：libmpv 缺失（OSError）→ 包装成 RuntimeError
+        fake2 = mock.Mock()
+        fake2.MPV.side_effect = OSError('cannot load mpv')
+        with mock.patch.dict(sys.modules, {'mpv': fake2}):
+            with self.assertRaises(RuntimeError):
+                MpvPlayer()
+
+        # 场景 3：不传路径时构造器不接 libmpv 参数
+        fake3 = mock.Mock()
+        fake3.MPV.return_value = mock.Mock()
+        with mock.patch.dict(sys.modules, {'mpv': fake3}):
+            MpvPlayer()
+            self.assertNotIn('libmpv', fake3.MPV.call_args.kwargs)
+
+
 if __name__ == '__main__':
     unittest.main()
