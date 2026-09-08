@@ -2963,10 +2963,9 @@ def main():
     if not cfg.get('token') or '换成' in str(cfg['token']):
         log.error('player_config.json 里还没填 token（云端设备口令）')
         sys.exit(1)
-    if not str(cfg['server']).startswith(('ws://', 'wss://')):
-        cfg['server'] = str(cfg['server']).replace('http://', 'ws://').replace('https://', 'wss://')
-        if not str(cfg['server']).endswith('/ws'):
-            cfg['server'] += '/ws'
+    cfg['server'] = str(cfg['server']).replace('http://', 'ws://').replace('https://', 'wss://')
+    if not str(cfg['server']).endswith('/ws'):
+        cfg['server'] += '/ws'   # 所有 scheme 统一补 /ws（Task 15 C2 修订：ws:// 直连也需补）
     # Windows 下自动找 libmpv dll
     if sys.platform == 'win32' and not cfg.get('libmpv'):
         hits = glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'libmpv', '**', 'mpv-2.dll'), recursive=True)
@@ -3315,6 +3314,12 @@ Expected: 点歌后真实出声；音量滑条实时改变 mpv 音量；切歌�
 - [ ] **Step 4: 提交**
 
 Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: player websocket client with reconnect"`
+
+#### Task 15 审查修订（实现者 DONE_WITH_CONCERNS 裁决，审查前修正）
+
+**C1. 空闲期断线导致重连机制失效（计划内部矛盾）**：Task 15 代码块的 client.py 在「播放器空闲等待指令」期间若服务器/网络断开，receiver 任务静默终止（`async for raw in ws` 抛 ConnectionClosedError 无人捕获），control_loop 永远阻塞在 `cmdq.get()`，session 不返回，run() 的 5s 重试永不触发——与计划 Produces 行「断线 5s 重试」及全局约束「播放端断线→重连自动接着播」直接矛盾（实现者在服务器被杀场景实测复现：播放器永久挂死）。裁决：以重连语义为准（全局约束负载性要求）。修法：receiver 在正常结束或异常时向 cmdq 放入终止哨兵（None）；control_loop 与 play_session 两处消费点都识别哨兵：play_session 先 `player.stop()` 再退出，control_loop 收到哨兵（或 play_session 因断线返回）后退出，session 返回 → run() 的 5s 重试生效。重连后服务器 playerHello 自动续播队首，无需额外处理。注意哨兵只能在消费处识别、不得透传给 apply_cmd（None 无 action 字段）。
+
+**C2. ws:// 直连地址缺 /ws 后缀（计划内部矛盾）**：Task 13 的 player.py 只在 http(s):// 输入时补 /ws 后缀；Task 15 Step 2 示例配置 `ws://localhost:3000` 不带 /ws，实际连接到服务器 WebSocket 路径 `/`（WS 路径固定为 /ws）被拒绝（实测 HTTP 400）。裁决：配置示例与 player_config.example.json 均为裸域名/裸地址（http/https），/ws 属实现细节，用户不应手写。修法：player.py 把 /ws 后缀补齐逻辑移出 scheme 转换分支，对所有 scheme 统一「末尾非 /ws 则补 /ws」。Task 13 代码块已同步（见下）。
 
 ## Phase 4 — 部署与验收
 
