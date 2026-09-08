@@ -32,7 +32,20 @@ async function withRealtime(handler, opts = {}) {
   const nextMsg = (w) => new Promise((resolve) => {
     w.on('message', function h(data) { w.off('message', h); resolve(JSON.parse(data)); });
   });
-  try { await handler({ rt, ws, nextMsg, history, port }); }
+  // 播放路径一次动作会广播多条 state（playItem 解析前后各一条；finished 先发 current=null 帧再发新 current 帧），
+  // 用谓词排水等到目标状态，避免一次性 nextMsg 消费偏移；5s 超时转成测试失败而非挂死。
+  const nextState = (w, pred) => new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => { w.off('message', h); reject(new Error('nextState 等待目标状态超时')); }, 5000);
+    function h(data) {
+      const m = JSON.parse(data);
+      if (m.type !== 'state' || !pred(m.state)) return;
+      clearTimeout(deadline);
+      w.off('message', h);
+      resolve(m);
+    }
+    w.on('message', h);
+  });
+  try { await handler({ rt, ws, nextMsg, nextState, history, port }); }
   finally { server.close(); }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,7 +83,7 @@ test('token 错误按网页端处理，不成为播放端', async () => {
 });
 
 test('播放端 finished → 下一首 play；网页端全部同步收到新 state', async () => {
-  await withRealtime(async ({ ws, nextMsg }) => {
+  await withRealtime(async ({ ws, nextMsg, nextState }) => {
     const player = await ws();
     player.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
     await sleep(30);
@@ -81,7 +94,11 @@ test('播放端 finished → 下一首 play；网页端全部同步收到新 sta
     web1.send(JSON.stringify({ type: 'play_request', song: { text: 'B', song_id: '2', title: 'B', duration_ms: 1000, fee: 0 } }));
     await nextMsg(web1);
     player.send(JSON.stringify({ type: 'player_event', event: 'finished' }));
-    const [m1, m2] = await Promise.all([nextMsg(web1), nextMsg(web2)]);
+    // finished 的广播序列：current=null（finishCurrent）→ current=B（playItem 前后各一），排水到目标状态
+    const [m1, m2] = await Promise.all([
+      nextState(web1, (s) => s.current && s.current.song.title === 'B'),
+      nextState(web2, (s) => s.current && s.current.song.title === 'B'),
+    ]);
     assert.equal(m1.state.current.song.title, 'B');
     assert.equal(m2.state.current.song.title, 'B');
     web1.close(); web2.close(); player.close();
@@ -127,30 +144,33 @@ test('新播放端顶掉旧的，不误伤当前播放（播放端重连场景�
 });
 
 test('置顶/删除/暂停/音量/静音/切歌指令端到端', async () => {
-  await withRealtime(async ({ ws, nextMsg }) => {
+  await withRealtime(async ({ ws, nextState }) => {
     const player = await ws();
     player.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
     await sleep(30);
     const web = await ws();
     const song = (t) => JSON.stringify({ type: 'play_request', song: { text: t, song_id: t, title: t, duration_ms: 1000, fee: 0 } });
-    web.send(song('A')); await nextMsg(web);
-    web.send(song('B')); await nextMsg(web);
-    web.send(song('C')); await nextMsg(web);
-    let m = await nextMsg(web);
-    const bId = m.state.queue.find((x) => x.song.title === 'B').id;
-    web.send(JSON.stringify({ type: 'queue_top', id: bId })); m = await nextMsg(web);
-    assert.equal(m.state.queue[0].song.title, 'B');
-    web.send(JSON.stringify({ type: 'queue_remove', id: bId })); m = await nextMsg(web);
+    web.send(song('A')); await nextState(web, (s) => s.current && s.current.song.title === 'A');
+    web.send(song('B')); await nextState(web, (s) => s.queue.some((q) => q.song.title === 'B'));
+    web.send(song('C')); const cState = await nextState(web, (s) => s.queue.length === 2);
+    const cId = cState.state.queue.find((q) => q.song.title === 'C').id;
+    // 置顶 C（队尾→队首真实搬移；若置顶已居队首的 B，topQueue 走幂等分支不广播，测试会挂死）
+    web.send(JSON.stringify({ type: 'queue_top', id: cId }));
+    let m = await nextState(web, (s) => s.queue[0] && s.queue[0].song.title === 'C');
     assert.equal(m.state.queue[0].song.title, 'C');
-    web.send(JSON.stringify({ type: 'pause' })); m = await nextMsg(web);
+    assert.equal(m.state.queue[1].song.title, 'B');
+    web.send(JSON.stringify({ type: 'queue_remove', id: cId }));
+    m = await nextState(web, (s) => s.queue.length === 1 && s.queue[0].song.title === 'B');
+    assert.equal(m.state.queue[0].song.title, 'B');
+    web.send(JSON.stringify({ type: 'pause' })); m = await nextState(web, (s) => s.paused === true);
     assert.equal(m.state.paused, true);
     web.send(JSON.stringify({ type: 'resume' }));
-    web.send(JSON.stringify({ type: 'volume_set', value: 77 })); m = await nextMsg(web);
+    web.send(JSON.stringify({ type: 'volume_set', value: 77 })); m = await nextState(web, (s) => s.volume === 77);
     assert.equal(m.state.volume, 77);
-    web.send(JSON.stringify({ type: 'mute_toggle' })); m = await nextMsg(web);
+    web.send(JSON.stringify({ type: 'mute_toggle' })); m = await nextState(web, (s) => s.muted === true);
     assert.equal(m.state.muted, true);
-    web.send(JSON.stringify({ type: 'skip' })); m = await nextMsg(web);
-    assert.equal(m.state.current.song.title, 'C');
+    web.send(JSON.stringify({ type: 'skip' })); m = await nextState(web, (s) => s.current && s.current.song.title === 'B');
+    assert.equal(m.state.current.song.title, 'B');
     web.close(); player.close();
   });
 });

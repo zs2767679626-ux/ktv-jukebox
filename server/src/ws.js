@@ -16,7 +16,6 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
   function sendState() {
     const msg = JSON.stringify({ type: 'state', state: jukebox.getState(), servertime: Date.now() });
     for (const c of webClients) if (c.readyState === 1) c.send(msg);
-    if (player && player.readyState === 1) player.send(msg);
   }
   function sendToast(msg) {
     const data = JSON.stringify({ type: 'toast', msg });
@@ -33,22 +32,22 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
   wss.on('connection', (ws) => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
-    let role = null; // 'web' | 'player'
+    // 网页端连接即注册：只观看不操作的客户端也必须收得到广播
+    // （若等首条入站消息才分类，被动观看者永远收不到 state）
+    let role = 'web';
+    webClients.add(ws);
 
     ws.on('message', (raw) => {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
-      if (!role) {
-        if (msg.type === 'player_hello' && isPlayerToken(msg.token)) {
-          role = 'player';
-          if (player) player.close();
-          player = ws;
-          log('player connected');
-          jukebox.playerHello();
-          return;
-        }
-        role = 'web';
-        webClients.add(ws);
+      if (role === 'web' && msg.type === 'player_hello' && isPlayerToken(msg.token)) {
+        webClients.delete(ws);
+        role = 'player';
+        if (player) player.close();
+        player = ws;
+        log('player connected');
+        jukebox.playerHello();
+        return;
       }
       if (role === 'player') {
         if (msg.type === 'player_event') jukebox.playerEvent(msg.event, msg.detail);
