@@ -148,11 +148,13 @@ test('置顶把队列项移到队首（不打断当前），删除记录 skipped
   j.addToQueue(song('C'));
   await flush();
   const state = j.getState();
-  j.topQueue(state.queue[0].id); // B 已在队首（A 正在播），对队首置顶是幂等空操作；随后删除 B 验证历史记录
-  assert.equal(j.getState().queue[0].song.title, 'B');
-  j.removeQueue(j.getState().queue[0].id);
+  j.topQueue(state.queue[1].id); // C 置顶：验证真正搬移（队尾→队首）
   assert.equal(j.getState().queue[0].song.title, 'C');
-  const removed = history.records.find((r) => r.song.title === 'B');
+  assert.equal(j.getState().queue[1].song.title, 'B');
+  assert.equal(j.getState().current.song.title, 'A'); // 不打断当前
+  j.removeQueue(j.getState().queue[0].id);
+  assert.equal(j.getState().queue[0].song.title, 'B');
+  const removed = history.records.find((r) => r.song.title === 'C');
   assert.equal(removed.status, 'skipped');
   assert.equal(removed.updates.at(-1).reason, '被移除');
 });
