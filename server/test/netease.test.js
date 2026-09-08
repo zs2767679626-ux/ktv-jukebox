@@ -28,7 +28,7 @@ function fakeApi(overrides = {}) {
 test('search 归一化：title/artist/album/duration/fee', async () => {
   const n = createNetease(fakeApi());
   const r = await n.search('晴天');
-  assert.equal(r[0].id, '186016');
+  assert.equal(r[0].song_id, '186016');
   assert.equal(r[0].title, '晴天');
   assert.equal(r[0].artist, '周杰伦');
   assert.equal(r[0].album, '叶惠美');

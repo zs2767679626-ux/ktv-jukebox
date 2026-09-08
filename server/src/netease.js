@@ -7,7 +7,7 @@ function createNetease(api, opts = {}) {
 
   function normalize(s) {
     return {
-      id: String(s.id),
+      song_id: String(s.id),
       title: s.name || '',
       artist: ((s.ar || s.artists || []).map((a) => a.name).join('/')) || '',
       album: (s.al && s.al.name) || (s.album && s.album.name) || '',
