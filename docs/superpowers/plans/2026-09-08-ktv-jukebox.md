@@ -681,13 +681,13 @@ test('播放中 resolveUrl 尚未返回时切歌，结果作废', async () => {
   assert.equal(history.records[0].status, 'skipped');
   resolvers.A({ url: 'http://example.com/late.mp3' }); // A 的迟到结果必须作废
   await flush();
-  const plays = events.filter((e) => e[0] === 'player' && e[1].action === 'play');
-  assert.equal(plays.length, 0); // 迟到结果不得触发 play 指令
+  const plays = () => events.filter((e) => e[0] === 'player' && e[1].action === 'play');
+  assert.equal(plays().length, 0); // 迟到结果不得触发 play 指令
   assert.equal(j.getState().current.song.title, 'B'); // 也不得顶替 current
   resolvers.B({ url: 'http://example.com/b.mp3' });
   await flush();
-  assert.equal(plays.length, 1);
-  assert.equal(plays[0][1].song.title, 'B'); // 只有 B 正常开播
+  assert.equal(plays().length, 1);
+  assert.equal(plays()[0][1].song.title, 'B'); // 只有 B 正常开播
 });
 ```
 
