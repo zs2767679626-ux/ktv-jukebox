@@ -1,0 +1,5 @@
+node_modules/
+server/data/
+__pycache__/
+player/player_config.json
+.DS_Store
