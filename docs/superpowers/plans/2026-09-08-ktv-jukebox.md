@@ -101,7 +101,7 @@ jukebox/
 {"type":"toast","msg":"版权受限，已自动跳过"}
 ```
 
-播放端不在此广播范围内：只收下方 `player_cmd` 指令流（state 对播放端无价值且制造指令/状态交错）。
+播放端不在此广播范围内：只收下方 `player_cmd` 指令流（state 对播放端无价值且制造指令/状态交错）。新网页端连接时立即收到一次当前 state 快照（后进页面首屏即有内容，无需等下一条事件广播）；此后仅在状态变化时广播。播放端连接瞬间可能也收到这一帧（注册即发、随后才升级），客户端应忽略 state 帧。
 
 **服务端 → 播放端（指令）**
 
@@ -1283,6 +1283,7 @@ Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: re
 - Produces: `createRealtime({server, history, resolveUrl, isPlayerToken})` 返回 `{jukebox, wss}`：
   - 连接分类：连接即按网页端注册（被动观看者也收得到广播）；任意时刻收到 `player_hello` 且 token 正确 → 升级为播放端（同刻只保留一个，新的顶掉旧的）
   - 每次 jukebox 状态变化广播 `{type:'state', state, servertime}` 给全部网页端（播放端只收 `player_cmd` 指令流，不收 state，避免指令/状态交错）；`{type:'toast', msg}` 只给网页端
+  - 新网页端连接时立即单独推送一次当前 state 快照（后进页面首屏即有内容）
   - 心跳：每 30s ping，未 pong 则 terminate
   - `server` 挂到同一 HTTP 服务，路径 `/ws`
 
@@ -1611,7 +1612,7 @@ module.exports = { createRealtime };
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
-Expected: 全部 PASS（store 4 + queue 16 + netease 5 + api 4 + ws 7）
+Expected: 全部 PASS（store 4 + queue 16 + netease 5 + api 4 + ws 8）
 
 - [ ] **Step 5: 启动真服务器联调真实网易云（手动验证）**
 
@@ -2002,6 +2003,44 @@ Expected: 深色界面、顶部标题与"🟢 已连接"、移动宽度下底部
 - [ ] **Step 8: 提交**
 
 Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: web shell, theme and realtime skeleton"`
+
+#### Task 7 审查修订（Task 7 首轮审查裁决，fix round 1 执行）
+
+**A. 悬空 vendor 引用（审查 Important #1）**：index.html 引用 `vendor/qrcode.min.js` 但文件尚不存在，SPA 兜底把 index.html 当 JS 返回（MIME 拒绝），每页载入必现控制台报错。修法：按 Task 12 Step 1 的下载命令提前落盘该文件（Task 12 执行时若文件已存在则校验内容即可，不必重复下载）。
+
+**B. 新网页端无初始 state 快照（审查 Important #2）**：ws.js 连接时只注册不发送，后进页面要等下一次事件广播才有内容。修法（改 Task 6 交付的 `server/src/ws.js` 与 `server/test/ws.test.js`）：
+1. `server/src/ws.js` 的 `wss.on('connection')` 处理器中，`webClients.add(ws);` 之后加两行（此刻 role 必为 'web'；播放端升级前收到这一帧按协议应忽略）：
+```js
+    // 新网页端连接即收一次当前 state 快照：后进页面首屏即有内容，无需等下一条事件广播
+    ws.send(JSON.stringify({ type: 'state', state: jukebox.getState(), servertime: Date.now() }));
+```
+2. `server/test/ws.test.js` 既有 7 个测试：每个网页端连接后、发送任何指令前，先 `await nextMsg(该客户端);` 排掉连接快照。具体位置：
+   - 测试 1「网页端点歌」：`const web = await ws();` 之后
+   - 测试 2「token 错误」：`const w = await ws();` 之后
+   - 测试 3「finished→下一首」：`const web2 = await ws();` 之后，`await nextMsg(web1); await nextMsg(web2);`（两个网页端各排一帧）
+   - 测试 4「播放端断开」：`const web = await ws();` 之后
+   - 测试 5「新播放端顶掉旧的」：`const web = await ws();` 之后
+   - 测试 7「VIP」：`const web = await ws();` 之后（否则快照帧 current=null 会提前喂饱 sP 谓词，弱化断言）
+   - 测试 6「置顶/删除/…」：无需排——快照 state（current=null、queue=[]、volume=60、paused=false、muted=false）不匹配该测试任何 nextState 谓词
+   播放端连接（`const player = await ws();`）不排：播放端不收快照帧。
+3. `server/test/ws.test.js` 追加第 8 个测试（放在测试 7 之后）：
+```js
+test('网页端连接即收到初始 state 快照', async () => {
+  await withRealtime(async ({ ws, nextMsg }) => {
+    const web = await ws();
+    const snap = await nextMsg(web);
+    assert.equal(snap.type, 'state');
+    assert.ok(snap.servertime > 0);
+    assert.equal(snap.state.volume, 60);
+    assert.equal(snap.state.current, null);
+    assert.equal(snap.state.queue.length, 0);
+    web.close();
+  });
+});
+```
+4. 全量期望 37/37（store 4 + queue 16 + netease 5 + api 4 + ws 8），裸 `node --test` 绿期自行退出。
+
+**C. Step 7 浏览器手动验证（审查 Important #3）**：留给人验收，见任务完成汇报。
 
 ### Task 8: 点歌视图（搜索 + 分类 + 歌曲列表子页）
 
