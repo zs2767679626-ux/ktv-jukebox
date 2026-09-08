@@ -73,7 +73,7 @@ jukebox/
 **客户端 → 服务端**
 
 ```jsonc
-// 播放端（连接后的第一条消息必须是这个，token 正确才算播放端，否则按网页端处理）
+// 播放端（任意时刻发此消息且 token 正确即升级为播放端；此前的网页端指令按网页端处理，自洽。同刻只保留一个播放端，新的顶掉旧的）
 {"type":"player_hello","token":"<设备口令>"}
 // 播放端事件上报
 {"type":"player_event","event":"started"}
@@ -464,7 +464,7 @@ Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: sq
 
 **Interfaces:**
 - Consumes: 无
-- Produces: `createJukebox({resolveUrl, sendToPlayer, broadcast, history, now})` 返回 `{getState, addToQueue, topQueue, removeQueue, skip, pause, resume, setVolume, toggleMute, playerHello, playerGone, playerEvent, playNext}`（签名与语义见代码注释；这是全项目状态核心，Phase 2/3 都依赖）
+- Produces: `createJukebox({resolveUrl, sendToPlayer, broadcast, toast, history, now})` 返回 `{getState, addToQueue, topQueue, removeQueue, skip, pause, resume, setVolume, toggleMute, playerHello, playerGone, playerEvent, playNext}`（签名与语义见代码注释；这是全项目状态核心，Phase 2/3 都依赖）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -879,7 +879,7 @@ module.exports = { createJukebox };
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
-Expected: 全部 PASS（store 4 个 + queue 13 个）
+Expected: 全部 PASS（store 4 个 + queue 16 个）
 
 - [ ] **Step 5: 提交**
 
@@ -1281,7 +1281,7 @@ Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: re
 **Interfaces:**
 - Consumes: Task 3 `createJukebox` 的完整接口；协议见文件头
 - Produces: `createRealtime({server, history, resolveUrl, isPlayerToken})` 返回 `{jukebox, wss}`：
-  - 连接分类：首消息 `player_hello` 且 token 正确 → 播放端（同刻只保留一个，新的顶掉旧的）；否则网页端
+  - 连接分类：连接即按网页端注册（被动观看者也收得到广播）；任意时刻收到 `player_hello` 且 token 正确 → 升级为播放端（同刻只保留一个，新的顶掉旧的）
   - 每次 jukebox 状态变化广播 `{type:'state', state, servertime}` 给全部网页端（播放端只收 `player_cmd` 指令流，不收 state，避免指令/状态交错）；`{type:'toast', msg}` 只给网页端
   - 心跳：每 30s ping，未 pong 则 terminate
   - `server` 挂到同一 HTTP 服务，路径 `/ws`
@@ -1338,8 +1338,20 @@ async function withRealtime(handler, opts = {}) {
     }
     w.on('message', h);
   });
-  try { await handler({ rt, ws, nextMsg, nextState, history, port }); }
-  finally { server.close(); }
+  // 与 nextState 同构：排水到 toast 帧；5s 超时转失败
+  const nextToast = (w) => new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => { w.off('message', h); reject(new Error('nextToast 等待超时')); }, 5000);
+    function h(data) {
+      const m = JSON.parse(data);
+      if (m.type !== 'toast') return;
+      clearTimeout(deadline);
+      w.off('message', h);
+      resolve(m);
+    }
+    w.on('message', h);
+  });
+  try { await handler({ rt, ws, nextMsg, nextState, nextToast, history, port }); }
+  finally { rt.wss.close(); server.close(); } // 关 wss 清心跳定时器，否则裸 node --test 绿期不退出
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1467,6 +1479,23 @@ test('置顶/删除/暂停/音量/静音/切歌指令端到端', async () => {
     web.close(); player.close();
   });
 });
+
+test('VIP 点歌 → 网页端收到版权受限 toast 与 state，历史 skipped', async () => {
+  await withRealtime(async ({ ws, nextToast, nextState, history }) => {
+    const player = await ws();
+    player.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
+    await sleep(30);
+    const web = await ws();
+    web.send(JSON.stringify({ type: 'play_request', song: { text: 'VIP歌', song_id: '1', title: 'VIP歌', fee: 1 } }));
+    const t = await nextToast(web);
+    assert.equal(t.msg, '版权受限，已自动跳过');
+    const s = await nextState(web, (st) => st.current === null);
+    assert.equal(s.state.current, null);
+    assert.equal(history.records[0].status, 'skipped');
+    assert.equal(history.records[0].updates.at(-1).reason, '版权受限');
+    web.close(); player.close();
+  });
+}, { resolveUrl: async () => ({ error: 'vip' }) });
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -1508,6 +1537,7 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
     history,
     sendToPlayer,
     broadcast: sendState,
+    toast: sendToast,
   });
 
   wss.on('connection', (ws) => {
@@ -1578,7 +1608,7 @@ module.exports = { createRealtime };
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
-Expected: 全部 PASS（store 4 + queue 13 + netease 5 + api 4 + ws 6）
+Expected: 全部 PASS（store 4 + queue 16 + netease 5 + api 4 + ws 7）
 
 - [ ] **Step 5: 启动真服务器联调真实网易云（手动验证）**
 
@@ -1591,6 +1621,25 @@ Expected: 打印 `PLAYER_CMD {"action":"play","url":"http://...mp3","song":...}`
 - [ ] **Step 6: 提交**
 
 Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: websocket hub and realtime integration"`
+
+#### Task 3/6 审查修订（Task 6 首轮审查裁决，fix round 4 执行）
+
+**A. 裸 `node --test` 绿期挂死（审查 Important #1）**：ws.js 心跳 interval 仅 `wss 'close'` 清理，测试助手只 `server.close()` 不触发它。修法已并入 Step 1 助手（`finally` 先 `rt.wss.close()` 再 `server.close()`）；Step 2/4 命令保持裸 `node --test`，绿期后必须正常退出（不退出即失败）。
+
+**B. toast 契约无产生源（审查 ⚠️，确认属实）**：`sendToast` 全仓库无调用方。修法——queue.js 增 `toast` 钩子，ws.js 接线（Task 3 文件改动；toast 默认 no-op，Task 3 已验收的 13 个测试不受影响）：
+
+1. `server/src/queue.js` deps 解构加一行：
+   `toast = () => {},   // (msg) => void：自动跳过时向网页端提示；默认 no-op 兼容既有测试`
+2. `playItem` 的 `resolved.error` 分支（现 queue.js:82-86）在 `finishCurrent(...)` 之后、`playNext()` 之前加：
+   `toast(resolved.error === 'vip' ? '版权受限，已自动跳过' : '无法获取播放地址，已自动跳过');`
+3. `playerEvent` 的 `error` 分支（现 queue.js:157-161）在 `finishCurrent(...)` 之后加：
+   `toast((detail.reason || '播放错误') + '，已自动跳过');`
+4. `server/src/ws.js` 的 createJukebox 调用加 `toast: sendToast,`（已并入 Step 3 代码块）。
+5. `server/test/queue.test.js`：setup 的 createJukebox 参数加 `toast: (msg) => events.push(['toast', msg])`（events 注释改为 `['player'|'state'|'toast', ...]`）。新增 3 个测试（沿用既有断言风格，now 固定 1700000000000）：
+   - 「VIP 歌解析失败 → toast 版权受限，已自动跳过」：`resolveUrl: async () => ({ error: 'vip' })`；playerHello 后 addToQueue 一首，`await Promise.resolve()` 两次等解析链完成；断言 events 含 `['toast','版权受限，已自动跳过']`、history.records[0].status==='skipped'、updates 末尾 reason==='版权受限'、events 无 `['player',{action:'play'}]`。
+   - 「unavailable → toast 无法获取播放地址，已自动跳过」：同上但 `{ error: 'unavailable' }`、文案「无法获取播放地址，已自动跳过」。
+   - 「播放端 error 事件 → toast 播放错误，已自动跳过」：默认 resolveUrl；playerHello 后点歌、等 URL 解析完成（events 出现 play 指令）；再 `playerEvent('error', {})`；断言 events 含 `['toast','播放错误，已自动跳过']`、history 记录 status==='skipped'、reason==='播放错误'。
+6. `server/test/ws.test.js` 新增第 7 个测试（已并入 Step 1 代码块）：VIP 点歌 → 网页端收 toast 与 state，历史 skipped/版权受限。
 
 ## Phase 2 — 前端
 
