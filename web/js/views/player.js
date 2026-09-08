@@ -59,6 +59,14 @@ function bind(el, ctx) {
     ctx.actions.setVolume(Number(slider.value));
   });
   setInterval(() => tick(el, ctx), 250);
+  // 二维码（qrcodejs 全局对象；vendor 缺失时静默跳过）
+  if (typeof window.QRCode !== 'undefined') {
+    new window.QRCode(el.querySelector('#qrcode'), {
+      text: location.origin + location.pathname,
+      width: 128, height: 128,
+      correctLevel: window.QRCode.CorrectLevel.M,
+    });
+  }
 }
 
 function update(el, ctx) {

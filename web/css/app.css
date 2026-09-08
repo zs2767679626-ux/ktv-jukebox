@@ -116,6 +116,7 @@ body[data-view="queue"] #view-queue { display: block; }
 .hint { font-size: 12px; color: var(--dim); margin-top: 8px; }
 .loading, .empty-tip { color: var(--dim); text-align: center; padding: 30px 0; font-size: 13px; }
 .qr { text-align: center; margin-top: 12px; }
+@media (max-width: 899px) { .qr { display: none; } }
 .qr img, .qr canvas { border-radius: 8px; }
 .offline { color: var(--accent); }
 @media (min-width: 900px) {
