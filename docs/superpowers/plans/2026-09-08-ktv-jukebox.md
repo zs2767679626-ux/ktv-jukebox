@@ -1132,7 +1132,7 @@ async function withServer(handler) {
 }
 const req = (port, method, p, body) => new Promise((resolve, reject) => {
   const data = body ? JSON.stringify(body) : null;
-  const r = http.request({ port, method, path: p, headers: data ? { 'content-type': 'application/json' } : {} }, (res) => {
+  const r = http.request({ port, method, path: encodeURI(p), headers: data ? { 'content-type': 'application/json' } : {} }, (res) => {
     let buf = '';
     res.on('data', (c) => { buf += c; });
     res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(buf) }));
