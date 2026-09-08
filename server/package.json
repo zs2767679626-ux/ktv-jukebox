@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node bin/server.js",
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=23.4"
