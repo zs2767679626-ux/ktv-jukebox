@@ -2,6 +2,13 @@
 // 歌词（Task 10）与二维码（Task 12）在本文件扩展。
 // render 幂等：首次构建 DOM + 挂监听，之后仅原地更新字段。
 
+import { parseLrc, activeIndex } from '../lrc.js';
+
+// 歌词状态（模块级）
+let lyricLines = [];
+let lyricSongId = null;
+let lastActive = -1;
+
 export function render(el, ctx) {
   if (el.__jukeboxPlayer) { update(el, ctx); return; }
   el.__jukeboxPlayer = true;
@@ -97,12 +104,29 @@ function update(el, ctx) {
 
 function tick(el, ctx) {
   const st = ctx.state;
-  if (!st || !st.current) return;
+  if (!st || !st.current) { loadLyrics(el, ctx); return; }
   const cur = st.current;
+  // 进度
   const bar = el.querySelector('#progressBar');
   if (cur.song.duration_ms && cur.started_at && !st.paused) {
     const pct = Math.max(0, Math.min(100, ((ctx.serverNow() - cur.started_at) / cur.song.duration_ms) * 100));
     bar.style.width = pct.toFixed(1) + '%';
+  }
+  if (st.paused) return;
+  // 歌词
+  if (lyricSongId !== cur.song.song_id) { loadLyrics(el, ctx); return; }
+  if (!lyricLines.length) return;
+  const t = (ctx.serverNow() - cur.started_at) / 1000;
+  const idx = activeIndex(lyricLines, t);
+  if (idx !== lastActive) {
+    const prev = el.querySelector(`.lyric-line[data-i="${lastActive}"]`);
+    if (prev) prev.classList.remove('active');
+    const lineEl = el.querySelector(`.lyric-line[data-i="${idx}"]`);
+    if (lineEl) {
+      lineEl.classList.add('active');
+      if (idx > lastActive) lineEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    lastActive = idx;
   }
 }
 
@@ -116,4 +140,33 @@ function fmtAgo(unixMs, ctx) {
   if (diff < 60) return '刚刚';
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
   return `${Math.floor(diff / 3600)} 小时前`;
+}
+
+async function loadLyrics(el, ctx) {
+  const cur = ctx.state && ctx.state.current;
+  const box = el.querySelector('#lyrics');
+  if (!cur || !cur.song.song_id) {
+    lyricLines = []; lyricSongId = null; lastActive = -1;
+    box.innerHTML = '<div class="empty-tip">暂无歌词</div>';
+    return;
+  }
+  if (lyricSongId === cur.song.song_id) return;
+  lyricSongId = cur.song.song_id;
+  lyricLines = []; lastActive = -1;
+  box.innerHTML = '<div class="empty-tip">歌词加载中…</div>';
+  try {
+    const r = await fetch(`/api/lyric?id=${encodeURIComponent(cur.song.song_id)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    lyricLines = parseLrc(data.lrc);
+    if (!lyricLines.length) { box.innerHTML = '<div class="empty-tip">纯音乐</div>'; return; }
+    box.innerHTML = lyricLines.map((l, i) => `<div class="lyric-line" data-i="${i}">${esc(l.text)}</div>`).join('');
+  } catch {
+    box.innerHTML = '<div class="empty-tip">歌词获取失败</div>';
+    lyricLines = [];
+  }
+}
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

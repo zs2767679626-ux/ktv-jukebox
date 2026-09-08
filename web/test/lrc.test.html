@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<script type="module">
+import { parseLrc, activeIndex } from '../js/lrc.js';
+const cases = [];
+const eq = (name, got, want) => {
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  cases.push(`${ok ? 'PASS' : 'FAIL'} ${name} ${ok ? '' : JSON.stringify(got)}`);
+};
+// 基本解析 + 排序 + 多时间标签
+let l = parseLrc('[00:10.00]第二句\n[00:05.50]第一句\n[00:15.00][00:20.00]重复句\n[00:10.00]');
+eq('parse 基本', l.map((x) => x.t), [5.5, 10, 15, 20]);
+eq('parse 文本', l[1].text, '第二句');
+eq('空歌词', parseLrc(''), []);
+eq('无时间标签行跳过', parseLrc('普通文本\n[99:99.99]末句'), [{ t: 6039.99, text: '末句' }]);
+eq('active -1', activeIndex(l, 3), -1);
+eq('active 中间', activeIndex(l, 11), 1);
+eq('active 边界', activeIndex(l, 15), 2);
+eq('active 末尾', activeIndex(l, 999), 3);
+document.body.innerHTML = '<pre>' + cases.join('\n') + '</pre>';
+</script>
