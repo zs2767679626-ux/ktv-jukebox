@@ -1280,7 +1280,7 @@ Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: re
 - Consumes: Task 3 `createJukebox` 的完整接口；协议见文件头
 - Produces: `createRealtime({server, history, resolveUrl, isPlayerToken})` 返回 `{jukebox, wss}`：
   - 连接分类：首消息 `player_hello` 且 token 正确 → 播放端（同刻只保留一个，新的顶掉旧的）；否则网页端
-  - 每次 jukebox 状态变化广播 `{type:'state', state, servertime}` 给全部客户端；`{type:'toast', msg}` 只给网页端
+  - 每次 jukebox 状态变化广播 `{type:'state', state, servertime}` 给全部网页端（播放端只收 `player_cmd` 指令流，不收 state，避免指令/状态交错）；`{type:'toast', msg}` 只给网页端
   - 心跳：每 30s ping，未 pong 则 terminate
   - `server` 挂到同一 HTTP 服务，路径 `/ws`
 
@@ -1475,7 +1475,6 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
   function sendState() {
     const msg = JSON.stringify({ type: 'state', state: jukebox.getState(), servertime: Date.now() });
     for (const c of webClients) if (c.readyState === 1) c.send(msg);
-    if (player && player.readyState === 1) player.send(msg);
   }
   function sendToast(msg) {
     const data = JSON.stringify({ type: 'toast', msg });
@@ -1492,22 +1491,22 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
   wss.on('connection', (ws) => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
-    let role = null; // 'web' | 'player'
+    // 网页端连接即注册：只观看不操作的客户端也必须收得到广播
+    // （若等首条入站消息才分类，被动观看者永远收不到 state）
+    let role = 'web';
+    webClients.add(ws);
 
     ws.on('message', (raw) => {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
-      if (!role) {
-        if (msg.type === 'player_hello' && isPlayerToken(msg.token)) {
-          role = 'player';
-          if (player) player.close();
-          player = ws;
-          log('player connected');
-          jukebox.playerHello();
-          return;
-        }
-        role = 'web';
-        webClients.add(ws);
+      if (role === 'web' && msg.type === 'player_hello' && isPlayerToken(msg.token)) {
+        webClients.delete(ws);
+        role = 'player';
+        if (player) player.close();
+        player = ws;
+        log('player connected');
+        jukebox.playerHello();
+        return;
       }
       if (role === 'player') {
         if (msg.type === 'player_event') jukebox.playerEvent(msg.event, msg.detail);
