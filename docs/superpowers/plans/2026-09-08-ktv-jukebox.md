@@ -6,7 +6,7 @@
 
 **Architecture:** 云服务器（腾讯 CloudStudio）跑 Node.js 后端（Express + ws + SQLite + 进程内网易云 API），前端零构建原生 JS 三视图（手机标签页 / 桌面三栏），公司电脑跑 Python + mpv 播放客户端，经 WebSocket 实时双向通信。点歌队列存内存，历史存 SQLite。
 
-**Tech Stack:** Node.js ≥18（Express 4、ws、better-sqlite3、NeteaseCloudMusicApi npm 包）、原生 HTML/CSS/JS（ES modules，零构建）、Python ≥3.9（websockets、python-mpv + mpv）、测试用 node:test 与 unittest（无额外依赖）。
+**Tech Stack:** Node.js ≥23.4（Express 4、ws、NeteaseCloudMusicApi npm 包 + 内置 node:sqlite，零原生编译）、原生 HTML/CSS/JS（ES modules，零构建）、Python ≥3.9（websockets、python-mpv + mpv）、测试用 node:test 与 unittest（无额外依赖）。
 
 ## Global Constraints
 
@@ -26,7 +26,7 @@
 ```
 jukebox/
   server/
-    package.json          # deps: express, ws, better-sqlite3, NeteaseCloudMusicApi；scripts: start, test
+    package.json          # deps: express, ws, NeteaseCloudMusicApi（历史库用内置 node:sqlite）；scripts: start, test
     bin/server.js         # 入口：读 config，组装真实依赖（sqlite + 网易云），启动 HTTP+WS
     src/config.js         # 端口/DB 路径/设备口令/网易云 realIP，全部来自 env
     src/store.js          # SQLite 历史记录：add / update / list / close
@@ -155,8 +155,10 @@ Expected: Node ≥18、npm ≥9、Python ≥3.9（缺 Python 不影响本阶段�
     "start": "node bin/server.js",
     "test": "node --test test/"
   },
+  "engines": {
+    "node": ">=23.4"
+  },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
     "express": "^4.19.2",
     "ws": "^8.18.0",
     "NeteaseCloudMusicApi": "^4.22.7"
@@ -167,7 +169,7 @@ Expected: Node ≥18、npm ≥9、Python ≥3.9（缺 Python 不影响本阶段�
 - [ ] **Step 3: 安装依赖**
 
 Run: `cd /c/Users/Administrator/jukebox/server && npm install`
-Expected: 安装成功；若 better-sqlite3 原生模块编译失败（缺 VS Build Tools），改 `"better-sqlite3": "^11.3.0"` 为 `"sql.js": "^1.11.0"`（并把 Task 2 的 store.js 换用 sql.js，其余不变）
+Expected: 安装成功。历史库不装 better-sqlite3（原生模块在无 VS Build Tools 的 Windows 上编译失败），改用 Node 内置 `node:sqlite`（`DatabaseSync`，同步 API，Node ≥23.4 免编译；本机 24.18 已验证）。注意：**不要**引入 sql.js 等其他 SQLite 依赖
 
 - [ ] **Step 4: 写 config.js**
 
@@ -375,7 +377,7 @@ test('list(limit) 截断条数', () => {
 - [ ] **Step 2: 运行测试确认失败**
 
 Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
-Expected: FAIL（`Cannot find module '../src/store'`）
+Expected: FAIL（store.js 目前是 Task 1 留下的启动空壳，断言不通过——空壳会被本任务整体替换）
 
 - [ ] **Step 3: 实现 store.js**
 
@@ -383,11 +385,11 @@ Expected: FAIL（`Cannot find module '../src/store'`）
 
 ```js
 'use strict';
-const Database = require('better-sqlite3');
+const { DatabaseSync } = require('node:sqlite');
 
 function createStore(dbPath) {
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  const db = new DatabaseSync(dbPath);
+  db.exec('PRAGMA journal_mode = WAL');
   db.exec(`
     CREATE TABLE IF NOT EXISTS history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -958,7 +960,7 @@ test('toplists/toplistSongs/artists/catlist/playlist 各返回归一化结构', 
 - [ ] **Step 2: 运行测试确认失败**
 
 Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
-Expected: FAIL（`Cannot find module '../src/netease'`）
+Expected: FAIL（netease.js 目前是 Task 1 留下的启动空壳，断言不通过——空壳会被本任务整体替换）
 
 - [ ] **Step 3: 实现 netease.js**
 
@@ -3173,7 +3175,7 @@ player/libmpv/
 
 1. 把代码推送到 GitHub 私有仓库（或本地打包 zip）
 2. 登录腾讯云 CloudStudio 控制台 → 新建应用 → 导入仓库/上传 zip
-3. 配置：运行时 Node.js 18+；启动命令 `cd server && npm install && npm start`（平台会注入 PORT）
+3. 配置：运行时 Node.js 24（历史库用内置 node:sqlite，需 ≥23.4）；启动命令 `cd server && npm install && npm start`（平台会注入 PORT）
 4. 环境变量：
    - `DEVICE_TOKEN`：设备口令（自己定一串，如 `ktv-2026-xj`）——播放端连接用
    - `NETEASE_REAL_IP`：可选，网易云 API 若限流时填国内 IP
