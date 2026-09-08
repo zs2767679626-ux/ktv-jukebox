@@ -40,27 +40,41 @@ async def session(cfg, player):
             await control_loop(ws, cmdq, player)
         finally:
             recv.cancel()
+            try:
+                await recv
+            except asyncio.CancelledError:
+                pass
 
 
 async def receiver(ws, cmdq):
-    async for raw in ws:
-        try:
-            msg = json.loads(raw)
-        except Exception:
-            continue
-        if msg.get('type') == 'player_cmd':
-            await cmdq.put(msg.get('cmd') or {})
+    """收帧并放入指令队列；连接断开（正常结束或异常）时放入 None 哨兵唤醒消费端。"""
+    sent = False
+    try:
+        async for raw in ws:
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            if msg.get('type') == 'player_cmd':
+                await cmdq.put(msg.get('cmd') or {})
+    finally:
+        if not sent:
+            sent = True
+            cmdq.put_nowait(None)
 
 
 async def control_loop(ws, cmdq, player):
     while True:
         cmd = await cmdq.get()
+        if cmd is None:  # 连接断开哨兵：退出会话，交由 run() 5 秒后重连
+            return
         if cmd.get('action') == 'play':
             song = cmd.get('song') or {}
             await player.play(cmd.get('url'), cmd.get('volume', 60), cmd.get('muted', False))
             await ws.send(json.dumps({'type': 'player_event', 'event': 'started'}))
             log.info('开始播放：%s', song.get('title') or cmd.get('url'))
-            await play_session(ws, cmdq, player)
+            if await play_session(ws, cmdq, player) == 'disconnected':
+                return
         else:
             await apply_cmd(player, cmd)
 
@@ -74,11 +88,11 @@ async def play_session(ws, cmdq, player):
         if ev == 'finished':
             log.info('播放完成')
             await ws.send(json.dumps({'type': 'player_event', 'event': 'finished'}))
-            return
+            return None
         if ev == 'error':
             log.warning('播放出错（加载失败或地址失效）')
             await ws.send(json.dumps({'type': 'player_event', 'event': 'error', 'detail': {'reason': '加载失败'}}))
-            return
+            return None
         ticks += 1
         if ticks % 10 == 0:  # 每 2 秒检测一次音频设备变化（蓝牙音箱掉线）
             cur = player.audio_device()
@@ -86,12 +100,15 @@ async def play_session(ws, cmdq, player):
                 log.warning('音频设备变化（可能蓝牙音箱掉线）：%s → %s', dev_at_start, cur)
                 await player.stop()
                 await ws.send(json.dumps({'type': 'player_event', 'event': 'error', 'detail': {'reason': '音频设备掉线'}}))
-                return
+                return None
         while not cmdq.empty():
             cmd = cmdq.get_nowait()
+            if cmd is None:  # 连接断开哨兵：停播并退出，控制环随后退出会话
+                await player.stop()
+                return 'disconnected'
             if cmd.get('action') == 'stop':
                 await player.stop()
-                return
+                return None
             await apply_cmd(player, cmd)
 
 

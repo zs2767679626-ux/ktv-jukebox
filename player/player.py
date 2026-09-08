@@ -26,10 +26,9 @@ def main():
     if not cfg.get('token') or '换成' in str(cfg['token']):
         log.error('player_config.json 里还没填 token（云端设备口令）')
         sys.exit(1)
-    if not str(cfg['server']).startswith(('ws://', 'wss://')):
-        cfg['server'] = str(cfg['server']).replace('http://', 'ws://').replace('https://', 'wss://')
-        if not str(cfg['server']).endswith('/ws'):
-            cfg['server'] += '/ws'
+    cfg['server'] = str(cfg['server']).replace('http://', 'ws://').replace('https://', 'wss://')
+    if not str(cfg['server']).endswith('/ws'):
+        cfg['server'] += '/ws'   # 所有 scheme 统一补 /ws（Task 15 C2 修订：ws:// 直连也需补）
     # Windows 下自动找 libmpv dll
     if sys.platform == 'win32' and not cfg.get('libmpv'):
         hits = glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'libmpv', '**', 'mpv-2.dll'), recursive=True)
