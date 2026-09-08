@@ -68,6 +68,7 @@ test('网页端点歌 → 广播 state，播放端收到 play 指令', async () 
     player.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
     await sleep(30);
     const web = await ws();
+    await nextMsg(web); // 排掉连接快照
     web.send(JSON.stringify({ type: 'play_request', song: { text: '晴天 周杰伦', song_id: '186016', title: '晴天', artist: '周杰伦', duration_ms: 269000, fee: 0 } }));
     const stateMsg = await nextMsg(web);
     assert.equal(stateMsg.type, 'state');
@@ -84,6 +85,7 @@ test('网页端点歌 → 广播 state，播放端收到 play 指令', async () 
 test('token 错误按网页端处理，不成为播放端', async () => {
   await withRealtime(async ({ ws, nextMsg }) => {
     const w = await ws();
+    await nextMsg(w); // 排掉连接快照
     w.send(JSON.stringify({ type: 'player_hello', token: 'wrong' }));
     w.send(JSON.stringify({ type: 'volume_set', value: 20 }));
     const msg = await nextMsg(w);
@@ -101,6 +103,7 @@ test('播放端 finished → 下一首 play；网页端全部同步收到新 sta
     await sleep(30);
     const web1 = await ws();
     const web2 = await ws();
+    await nextMsg(web1); await nextMsg(web2); // 两个网页端各排一帧连接快照
     web1.send(JSON.stringify({ type: 'play_request', song: { text: 'A', song_id: '1', title: 'A', duration_ms: 1000, fee: 0 } }));
     await nextMsg(web1); await nextMsg(web2);
     web1.send(JSON.stringify({ type: 'play_request', song: { text: 'B', song_id: '2', title: 'B', duration_ms: 1000, fee: 0 } }));
@@ -123,6 +126,7 @@ test('播放端断开 → playerOnline:false，当前歌 skipped', async () => {
     player.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
     await sleep(30);
     const web = await ws();
+    await nextMsg(web); // 排掉连接快照
     web.send(JSON.stringify({ type: 'play_request', song: { text: 'A', song_id: '1', title: 'A', duration_ms: 1000, fee: 0 } }));
     await nextMsg(web);
     player.close();
@@ -141,6 +145,7 @@ test('新播放端顶掉旧的，不误伤当前播放（播放端重连场景�
     p1.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
     await sleep(30);
     const web = await ws();
+    await nextMsg(web); // 排掉连接快照
     web.send(JSON.stringify({ type: 'play_request', song: { text: 'A', song_id: '1', title: 'A', duration_ms: 1000, fee: 0 } }));
     await nextMsg(web);
     const p2 = await ws();
@@ -188,11 +193,12 @@ test('置顶/删除/暂停/音量/静音/切歌指令端到端', async () => {
 });
 
 test('VIP 点歌 → 网页端收到版权受限 toast 与 state，历史 skipped', async () => {
-  await withRealtime(async ({ ws, nextToast, nextState, history }) => {
+  await withRealtime(async ({ ws, nextMsg, nextToast, nextState, history }) => {
     const player = await ws();
     player.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
     await sleep(30);
     const web = await ws();
+    await nextMsg(web); // 排掉连接快照（否则快照帧 current=null 会提前喂饱 sP 谓词）
     web.send(JSON.stringify({ type: 'play_request', song: { text: 'VIP歌', song_id: '1', title: 'VIP歌', fee: 1 } }));
     // toast 帧与其后 playNext 广播的 state 帧同批送达：两个排水监听先就位，
     // 否则后挂的 nextState 会丢掉已送达的 current=null 帧，确定性超时
@@ -205,4 +211,17 @@ test('VIP 点歌 → 网页端收到版权受限 toast 与 state，历史 skippe
     assert.equal(history.records[0].updates.at(-1).reason, '版权受限');
     web.close(); player.close();
   }, { resolveUrl: async () => ({ error: 'vip' }) });
+});
+
+test('网页端连接即收到初始 state 快照', async () => {
+  await withRealtime(async ({ ws, nextMsg }) => {
+    const web = await ws();
+    const snap = await nextMsg(web);
+    assert.equal(snap.type, 'state');
+    assert.ok(snap.servertime > 0);
+    assert.equal(snap.state.volume, 60);
+    assert.equal(snap.state.current, null);
+    assert.equal(snap.state.queue.length, 0);
+    web.close();
+  });
 });

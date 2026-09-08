@@ -37,11 +37,22 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
     // （若等首条入站消息才分类，被动观看者永远收不到 state）
     let role = 'web';
     webClients.add(ws);
+    // 新网页端连接即收一次当前 state 快照：后进页面首屏即有内容，无需等下一条事件广播。
+    // 帧必须等握手完成后单独成帧发送：若在连接回调里同步发送，帧与握手响应同包抵达客户端，
+    // 客户端在升级的同步阶段就把帧排进 nextTick 队列（早于 open 之后才挂载的任何监听，
+    // 含测试的排水 nextMsg），帧被静默丢弃。延迟 30ms 保证帧独立成段、排水必收到；
+    // 播放端升级时取消，播放端不收快照帧。
+    const snapTimer = setTimeout(() => {
+      if (role === 'web' && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'state', state: jukebox.getState(), servertime: Date.now() }));
+      }
+    }, 30);
 
     ws.on('message', (raw) => {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
       if (role === 'web' && msg.type === 'player_hello' && isPlayerToken(msg.token)) {
+        clearTimeout(snapTimer);
         webClients.delete(ws);
         role = 'player';
         if (player) player.close();
@@ -67,6 +78,7 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
     });
 
     ws.on('close', () => {
+      clearTimeout(snapTimer);
       if (role === 'player') {
         // 仅当断开的是当前播放端才下线；被新播放端顶掉的旧连接不触发 playerGone（否则会误跳过当前歌、抹掉 playerOnline）
         if (player === ws) {
