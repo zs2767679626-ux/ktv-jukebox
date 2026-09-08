@@ -1397,6 +1397,26 @@ test('播放端断开 → playerOnline:false，当前歌 skipped', async () => {
   });
 });
 
+test('新播放端顶掉旧的，不误伤当前播放（播放端重连场景）', async () => {
+  await withRealtime(async ({ ws, nextMsg }) => {
+    const p1 = await ws();
+    p1.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
+    await sleep(30);
+    const web = await ws();
+    web.send(JSON.stringify({ type: 'play_request', song: { text: 'A', song_id: '1', title: 'A', duration_ms: 1000, fee: 0 } }));
+    await nextMsg(web);
+    const p2 = await ws();
+    p2.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
+    await sleep(100); // 等旧连接 close 事件处理完，若误触发 playerGone，下面的广播会把错误状态暴露出来
+    web.send(JSON.stringify({ type: 'volume_set', value: 30 }));
+    const m = await nextMsg(web);
+    assert.equal(m.state.volume, 30);
+    assert.equal(m.state.playerOnline, true);
+    assert.equal(m.state.current.song.title, 'A');
+    web.close(); p1.close(); p2.close();
+  });
+});
+
 test('置顶/删除/暂停/音量/静音/切歌指令端到端', async () => {
   await withRealtime(async ({ ws, nextMsg }) => {
     const player = await ws();
@@ -1507,9 +1527,12 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
 
     ws.on('close', () => {
       if (role === 'player') {
-        if (player === ws) player = null;
-        jukebox.playerGone();
-        log('player disconnected');
+        // 仅当断开的是当前播放端才下线；被新播放端顶掉的旧连接不触发 playerGone（否则会误跳过当前歌、抹掉 playerOnline）
+        if (player === ws) {
+          player = null;
+          jukebox.playerGone();
+          log('player disconnected');
+        }
       } else if (role === 'web') {
         webClients.delete(ws);
       }
@@ -1534,7 +1557,7 @@ module.exports = { createRealtime };
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
-Expected: 全部 PASS（store 4 + queue 13 + netease 5 + api 4 + ws 5）
+Expected: 全部 PASS（store 4 + queue 13 + netease 5 + api 4 + ws 6）
 
 - [ ] **Step 5: 启动真服务器联调真实网易云（手动验证）**
 
