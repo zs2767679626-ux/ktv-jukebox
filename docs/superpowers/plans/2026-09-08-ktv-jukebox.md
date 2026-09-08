@@ -644,35 +644,50 @@ test('播放端断线：当前歌记 skipped/播放端断线，重连后播队�
   assert.equal(j.getState().current.song.title, 'B');
 });
 
-test('播放错误：历史记 reason 并自动下一首；音频设备掉线则停在空档不续播', async () => {
+test('播放错误：历史记 reason 并自动下一首；音频设备掉线则不续播（队列留档）', async () => {
   const { j, history } = setup();
   j.playerHello();
   j.addToQueue(song('A'));
   j.addToQueue(song('B'));
+  j.addToQueue(song('C'));
   await flush();
-  j.playerEvent('error', { reason: '加载失败' });
+  j.playerEvent('error', { reason: '加载失败' }); // A 错误 → 自动播 B
   await flush();
   assert.equal(j.getState().current.song.title, 'B');
   assert.equal(history.records[0].updates.at(-1).reason, '加载失败');
-  j.playerEvent('error', { reason: '音频设备掉线' });
+  j.playerEvent('error', { reason: '音频设备掉线' }); // B 掉线 → 不续播，C 留在队列
   await flush();
   assert.equal(j.getState().current, null);
-  assert.equal(j.getState().queue.length, 0);
+  assert.equal(j.getState().queue.length, 1);
+  assert.equal(j.getState().queue[0].song.title, 'C');
   assert.equal(history.records[1].updates.at(-1).reason, '音频设备掉线');
+  j.playerHello(); // 设备恢复重连 → 播队首 C
+  await flush();
+  assert.equal(j.getState().current.song.title, 'C');
 });
 
 test('播放中 resolveUrl 尚未返回时切歌，结果作废', async () => {
-  let resolve;
-  const { j, history } = setup({ resolveUrl: () => new Promise((r) => { resolve = r; }) });
+  const resolvers = {};
+  const { j, events, history } = setup({
+    resolveUrl: (song) => new Promise((r) => { resolvers[song.title] = r; }),
+  });
   j.playerHello();
   j.addToQueue(song('A'));
   j.addToQueue(song('B'));
-  await flush(); // resolveUrl 还挂着
-  j.skip(); // 此时 current 是 A（url 未决），直接结算跳过
-  resolve({ url: 'http://example.com/late.mp3' });
+  await flush(); // A 的 resolveUrl 还挂着
+  j.skip(); // current 是 A（url 未决），直接结算跳过；B 开播、url 同样未决
   await flush();
   assert.equal(j.getState().current.song.title, 'B');
   assert.equal(history.records[0].status, 'skipped');
+  resolvers.A({ url: 'http://example.com/late.mp3' }); // A 的迟到结果必须作废
+  await flush();
+  const plays = events.filter((e) => e[0] === 'player' && e[1].action === 'play');
+  assert.equal(plays.length, 0); // 迟到结果不得触发 play 指令
+  assert.equal(j.getState().current.song.title, 'B'); // 也不得顶替 current
+  resolvers.B({ url: 'http://example.com/b.mp3' });
+  await flush();
+  assert.equal(plays.length, 1);
+  assert.equal(plays[0][1].song.title, 'B'); // 只有 B 正常开播
 });
 ```
 
