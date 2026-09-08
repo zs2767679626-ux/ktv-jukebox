@@ -90,7 +90,7 @@ jukebox/
 {"type":"mute_toggle"}
 ```
 
-**服务端 → 网页端与播放端（广播）**
+**服务端 → 网页端（广播）**
 
 ```jsonc
 {"type":"state","servertime":1789000000000,"state":{
@@ -100,6 +100,8 @@ jukebox/
 }}
 {"type":"toast","msg":"版权受限，已自动跳过"}
 ```
+
+播放端不在此广播范围内：只收下方 `player_cmd` 指令流（state 对播放端无价值且制造指令/状态交错）。
 
 **服务端 → 播放端（指令）**
 
@@ -1583,8 +1585,8 @@ Expected: 全部 PASS（store 4 + queue 13 + netease 5 + api 4 + ws 6）
 Run: `cd /c/Users/Administrator/jukebox/server && node bin/server.js &`，然后：
 `curl -s -X POST localhost:3000/api/search -H "content-type: application/json" -d '{"q":"周杰伦"}' | head -c 300`
 Expected: 返回真实歌曲 JSON（含 title/artist/fee 字段）。若整体超时/报错，检查外网与 163 连通性；若正常，继续验证 WS：
-`cd /c/Users/Administrator/jukebox/server && node -e "const WebSocket=require('ws');const w=new WebSocket('ws://localhost:3000/ws');w.on('open',()=>{w.send(JSON.stringify({type:'player_hello',token:'dev-token-change-me'}));setTimeout(()=>{const c=new WebSocket('ws://localhost:3000/ws');c.on('open',()=>c.send(JSON.stringify({type:'play_request',song:{text:'测试',song_id:'186016',title:'晴天',artist:'周杰伦',duration_ms:269000,fee:0}})));c.on('message',d=>{const m=JSON.parse(d);if(m.type==='state'){console.log('STATE',JSON.stringify(m.state));process.exit(0);}});},300);});w.on('message',d=>{const m=JSON.parse(d);if(m.type==='player_cmd')console.log('PLAYER_CMD',JSON.stringify(m.cmd));});setTimeout(()=>process.exit(1),10000);"`
-Expected: 打印 `PLAYER_CMD {"action":"play","url":"https://...","song":...}`（真实歌曲地址）和 `STATE`（current 有歌）。测试完 `kill %1`
+`cd /c/Users/Administrator/jukebox/server && node -e "const WebSocket=require('ws');const w=new WebSocket('ws://localhost:3000/ws');w.on('open',()=>{w.send(JSON.stringify({type:'player_hello',token:'dev-token-change-me'}));setTimeout(()=>{const c=new WebSocket('ws://localhost:3000/ws');c.on('open',()=>c.send(JSON.stringify({type:'play_request',song:{text:'测试',song_id:'400876427',fee:0}})));c.on('message',d=>{const m=JSON.parse(d);if(m.type==='state'){console.log('STATE',JSON.stringify(m.state));process.exit(0);}});},300);});w.on('message',d=>{const m=JSON.parse(d);if(m.type==='player_cmd')console.log('PLAYER_CMD',JSON.stringify(m.cmd));});setTimeout(()=>process.exit(1),10000);"`
+Expected: 打印 `PLAYER_CMD {"action":"play","url":"http://...mp3","song":...}`（真实歌曲地址）和 `STATE`（current 有歌）。注意：示例歌必须用免费歌（fee=0，如 400876427）；VIP 歌（如 186016 晴天）songUrl 返回 error:vip，会被队列状态机按设计跳过，看不到 play 指令。测试完 `kill %1`
 
 - [ ] **Step 6: 提交**
 
