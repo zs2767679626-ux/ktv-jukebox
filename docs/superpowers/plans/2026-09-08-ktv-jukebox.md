@@ -893,7 +893,7 @@ Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: qu
 **Interfaces:**
 - Consumes: `NeteaseCloudMusicApi` npm 包（进程内调用，`api.search({keywords, limit, type:1})` 等）
 - Produces: `createNetease(api, {realIP})` 返回：
-  - `search(q, limit=30) → [{id,title,artist,album,duration_ms,fee}]`
+  - `search(q, limit=30) → [{song_id,title,artist,album,duration_ms,fee}]`
   - `songUrl(id) → {url} | {error:'vip'|'unavailable'}`
   - `lyric(id) → lrc字符串 | null`
   - `artists(type, initial) → [{id,name,pic}]`（type: male|female|band）
@@ -937,7 +937,7 @@ function fakeApi(overrides = {}) {
 test('search 归一化：title/artist/album/duration/fee', async () => {
   const n = createNetease(fakeApi());
   const r = await n.search('晴天');
-  assert.equal(r[0].id, '186016');
+  assert.equal(r[0].song_id, '186016');
   assert.equal(r[0].title, '晴天');
   assert.equal(r[0].artist, '周杰伦');
   assert.equal(r[0].album, '叶惠美');
@@ -998,7 +998,7 @@ function createNetease(api, opts = {}) {
 
   function normalize(s) {
     return {
-      id: String(s.id),
+      song_id: String(s.id),
       title: s.name || '',
       artist: ((s.ar || s.artists || []).map((a) => a.name).join('/')) || '',
       album: (s.al && s.al.name) || (s.album && s.album.name) || '',
@@ -2360,6 +2360,14 @@ Expected: 以上全部可用。验证完 `kill %1`
 - [ ] **Step 4: 提交**
 
 Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: song request view with search and categories"`
+
+#### Task 8 审查修订（Task 8 首轮审查裁决，fix round 1 执行）
+
+**C1. 歌曲载荷 `id`/`song_id` 契约分裂（审查 Critical，plan-mandated）**：真实点歌链路断——netease.js normalize 产出 `id`，而 index.js:21 resolveUrl 读 `song.song_id`、store.js:30 历史记 `song_id`、协议节样本与 Task 10 歌词均用 `song_id`；API 返回的每首歌都会因 songUrl(undefined) 被队列按「无法获取播放地址」自动跳过。裁决：歌曲对象统一用 `song_id`（6 处多数派）；歌手/榜单/歌单对象的 `id` 保持不动（point.js 按 `a.id`/`t.id`/`p.id` 消费）。修法：
+1. `server/src/netease.js` normalize 改为 `song_id: String(s.id),`
+2. `server/test/netease.test.js:31` 断言 `r[0].id` 改 `r[0].song_id`（:64 `artists[0].id` 不动——歌手 id 保持 `id`；api.test.js:63 `lists[0].id` 同理不动）
+3. 全量期望仍 37/37，裸 `node --test` 绿期自行退出
+4. 本计划 Task 4 Interfaces 与 netease 测试代码块已同步为 `song_id`
 
 ### Task 9: 播放视图（当前歌曲 + 控制条含音量 + 进度 + 下一首）
 
