@@ -13,6 +13,7 @@ function createJukebox(deps) {
     broadcast,    // () => void
     history,      // { add(song) => id, update(id, fields) }
     now = () => Date.now(),
+    toast = () => {},   // (msg) => void：自动跳过时向网页端提示；默认 no-op 兼容既有测试
   } = deps;
 
   const state = {
@@ -81,6 +82,7 @@ function createJukebox(deps) {
     if (state.current !== item) return; // 解析期间已被顶替（切歌等），结果作废
     if (resolved.error) {
       finishCurrent('skipped', resolved.error === 'vip' ? '版权受限' : '无法获取播放地址');
+      toast(resolved.error === 'vip' ? '版权受限，已自动跳过' : '无法获取播放地址，已自动跳过');
       playNext();
       return;
     }
@@ -156,6 +158,7 @@ function createJukebox(deps) {
       playNext();
     } else if (event === 'error') {
       finishCurrent('skipped', detail.reason || '播放错误');
+      toast((detail.reason || '播放错误') + '，已自动跳过');
       // 音频设备掉线时不自动续播（音箱没了，播下去也是漏音），恢复后由播放端重连或手动点歌触发
       if (detail.reason !== '音频设备掉线') playNext();
     }

@@ -5,7 +5,7 @@ const { createJukebox } = require('../src/queue');
 
 // 构造一个带记录能力的假历史 + 事件收集器
 function setup(overrides = {}) {
-  const events = []; // ['player', cmd] 或 ['state', state]
+  const events = []; // ['player', cmd] | ['state', state] | ['toast', msg]
   const history = {
     records: [],
     add(song) {
@@ -22,6 +22,7 @@ function setup(overrides = {}) {
     resolveUrl: overrides.resolveUrl || (async () => ({ url: 'http://example.com/a.mp3' })),
     sendToPlayer: (cmd) => events.push(['player', cmd]),
     broadcast: () => events.push(['state', j.getState()]),
+    toast: (msg) => events.push(['toast', msg]),
     history,
     now: () => 1700000000000,
   });
@@ -219,4 +220,40 @@ test('播放中 resolveUrl 尚未返回时切歌，结果作废', async () => {
   await flush();
   assert.equal(plays().length, 1);
   assert.equal(plays()[0][1].song.title, 'B'); // 只有 B 正常开播
+});
+
+test('VIP 歌解析失败 → toast 版权受限，已自动跳过', async () => {
+  const { j, events, history } = setup({ resolveUrl: async () => ({ error: 'vip' }) });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await Promise.resolve(); // 排空解析链微任务（resolveUrl 返回 vip → finishCurrent + toast）
+  await Promise.resolve();
+  assert.ok(events.some((e) => e[0] === 'toast' && e[1] === '版权受限，已自动跳过'));
+  assert.equal(history.records[0].status, 'skipped');
+  assert.equal(history.records[0].updates.at(-1).reason, '版权受限');
+  assert.ok(!events.some((e) => e[0] === 'player' && e[1].action === 'play'));
+});
+
+test('unavailable → toast 无法获取播放地址，已自动跳过', async () => {
+  const { j, events, history } = setup({ resolveUrl: async () => ({ error: 'unavailable' }) });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.ok(events.some((e) => e[0] === 'toast' && e[1] === '无法获取播放地址，已自动跳过'));
+  assert.equal(history.records[0].status, 'skipped');
+  assert.equal(history.records[0].updates.at(-1).reason, '无法获取播放地址');
+  assert.ok(!events.some((e) => e[0] === 'player' && e[1].action === 'play'));
+});
+
+test('播放端 error 事件 → toast 播放错误，已自动跳过', async () => {
+  const { j, events, history } = setup();
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush(); // 等 URL 解析完成、play 指令发出
+  assert.ok(events.some((e) => e[0] === 'player' && e[1].action === 'play'));
+  j.playerEvent('error', {});
+  assert.ok(events.some((e) => e[0] === 'toast' && e[1] === '播放错误，已自动跳过'));
+  assert.equal(history.records[0].status, 'skipped');
+  assert.equal(history.records[0].updates.at(-1).reason, '播放错误');
 });

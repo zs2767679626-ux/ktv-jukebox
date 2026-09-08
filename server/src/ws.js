@@ -27,6 +27,7 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
     history,
     sendToPlayer,
     broadcast: sendState,
+    toast: sendToast,
   });
 
   wss.on('connection', (ws) => {

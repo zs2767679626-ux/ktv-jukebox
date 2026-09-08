@@ -45,8 +45,20 @@ async function withRealtime(handler, opts = {}) {
     }
     w.on('message', h);
   });
-  try { await handler({ rt, ws, nextMsg, nextState, history, port }); }
-  finally { server.close(); }
+  // 与 nextState 同构：排水到 toast 帧；5s 超时转失败
+  const nextToast = (w) => new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => { w.off('message', h); reject(new Error('nextToast 等待超时')); }, 5000);
+    function h(data) {
+      const m = JSON.parse(data);
+      if (m.type !== 'toast') return;
+      clearTimeout(deadline);
+      w.off('message', h);
+      resolve(m);
+    }
+    w.on('message', h);
+  });
+  try { await handler({ rt, ws, nextMsg, nextState, nextToast, history, port }); }
+  finally { rt.wss.close(); server.close(); } // 关 wss 清心跳定时器，否则裸 node --test 绿期不退出
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -173,4 +185,24 @@ test('置顶/删除/暂停/音量/静音/切歌指令端到端', async () => {
     assert.equal(m.state.current.song.title, 'B');
     web.close(); player.close();
   });
+});
+
+test('VIP 点歌 → 网页端收到版权受限 toast 与 state，历史 skipped', async () => {
+  await withRealtime(async ({ ws, nextToast, nextState, history }) => {
+    const player = await ws();
+    player.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
+    await sleep(30);
+    const web = await ws();
+    web.send(JSON.stringify({ type: 'play_request', song: { text: 'VIP歌', song_id: '1', title: 'VIP歌', fee: 1 } }));
+    // toast 帧与其后 playNext 广播的 state 帧同批送达：两个排水监听先就位，
+    // 否则后挂的 nextState 会丢掉已送达的 current=null 帧，确定性超时
+    const sP = nextState(web, (st) => st.current === null);
+    const t = await nextToast(web);
+    assert.equal(t.msg, '版权受限，已自动跳过');
+    const s = await sP;
+    assert.equal(s.state.current, null);
+    assert.equal(history.records[0].status, 'skipped');
+    assert.equal(history.records[0].updates.at(-1).reason, '版权受限');
+    web.close(); player.close();
+  }, { resolveUrl: async () => ({ error: 'vip' }) });
 });
