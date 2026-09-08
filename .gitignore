@@ -3,3 +3,5 @@ server/data/
 __pycache__/
 player/player_config.json
 .DS_Store
+player/player.log
+player/libmpv/
