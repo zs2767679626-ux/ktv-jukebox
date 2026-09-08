@@ -1,0 +1,6 @@
+{
+  "server": "https://你的应用.app.workbuddy.link",
+  "token": "换成云端设备口令",
+  "libmpv": "",
+  "virtual": false
+}
