@@ -153,7 +153,7 @@ Expected: Node ≥18、npm ≥9、Python ≥3.9（缺 Python 不影响本阶段�
   "private": true,
   "scripts": {
     "start": "node bin/server.js",
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=23.4"
@@ -376,7 +376,7 @@ test('list(limit) 截断条数', () => {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: FAIL（store.js 目前是 Task 1 留下的启动空壳，断言不通过——空壳会被本任务整体替换）
 
 - [ ] **Step 3: 实现 store.js**
@@ -448,7 +448,7 @@ module.exports = { createStore };
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: 4 个测试全 PASS
 
 - [ ] **Step 5: 提交**
@@ -673,7 +673,7 @@ test('播放中 resolveUrl 尚未返回时切歌，结果作废', async () => {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: FAIL（`Cannot find module '../src/queue'`）
 
 - [ ] **Step 3: 实现 queue.js**
@@ -856,7 +856,7 @@ module.exports = { createJukebox };
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: 全部 PASS（store 4 个 + queue 14 个）
 
 - [ ] **Step 5: 提交**
@@ -959,7 +959,7 @@ test('toplists/toplistSongs/artists/catlist/playlist 各返回归一化结构', 
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: FAIL（netease.js 目前是 Task 1 留下的启动空壳，断言不通过——空壳会被本任务整体替换）
 
 - [ ] **Step 3: 实现 netease.js**
@@ -1054,7 +1054,7 @@ module.exports = { createNetease };
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: 全部 PASS
 
 - [ ] **Step 5: 提交**
@@ -1162,7 +1162,7 @@ test('netease 抛错 → 500 {error}', async () => {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: FAIL（health/search 全 404——api.js 还是空壳）
 
 - [ ] **Step 3: 实现 api.js**
@@ -1243,7 +1243,7 @@ test('netease 抛错 → 500 {error}', async () => {
 
 - [ ] **Step 5: 运行测试确认通过**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: 全部 PASS
 
 - [ ] **Step 6: 提交**
@@ -1409,7 +1409,7 @@ test('置顶/删除/暂停/音量/静音/切歌指令端到端', async () => {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: FAIL（ws.js 空壳：状态不广播、指令不生效）
 
 - [ ] **Step 3: 实现 ws.js**
@@ -1513,7 +1513,7 @@ module.exports = { createRealtime };
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `cd /c/Users/Administrator/jukebox/server && node --test test/`
+Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
 Expected: 全部 PASS（store 4 + queue 13 + netease 6 + api 4 + ws 5）
 
 - [ ] **Step 5: 启动真服务器联调真实网易云（手动验证）**
