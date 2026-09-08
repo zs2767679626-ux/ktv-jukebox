@@ -1487,9 +1487,12 @@ test('VIP 点歌 → 网页端收到版权受限 toast 与 state，历史 skippe
     await sleep(30);
     const web = await ws();
     web.send(JSON.stringify({ type: 'play_request', song: { text: 'VIP歌', song_id: '1', title: 'VIP歌', fee: 1 } }));
+    // toast 帧与其后 playNext 广播的 state 帧同批送达：两个排水监听先就位，
+    // 否则后挂的 nextState 会丢掉已送达的 current=null 帧，确定性超时
+    const sP = nextState(web, (st) => st.current === null);
     const t = await nextToast(web);
     assert.equal(t.msg, '版权受限，已自动跳过');
-    const s = await nextState(web, (st) => st.current === null);
+    const s = await sP;
     assert.equal(s.state.current, null);
     assert.equal(history.records[0].status, 'skipped');
     assert.equal(history.records[0].updates.at(-1).reason, '版权受限');
