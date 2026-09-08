@@ -2607,14 +2607,14 @@ Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: qr
 ### Task 13: 播放客户端脚手架 + 虚拟播放器
 
 **Files:**
-- Create: `player/requirements.txt`, `player/config.py`, `player/mpv.py`, `player/player.py`, `player/client.py`（本任务先占位）、`player/test_player.py`, `player/player_config.example.json`
+- Create: `player/requirements.txt`, `player/config.py`, `player/playback.py`, `player/player.py`, `player/client.py`（本任务先占位）、`player/test_player.py`, `player/player_config.example.json`
 
 **Interfaces:**
 - Consumes: 协议见文件头（播放端消息）
 - Produces:
   - `config.load(path) → cfg`（dict：server/token/libmpv/virtual/virtual_duration）
-  - `mpv.BasePlayer` 抽象接口：`play(url, volume, muted) / pause() / resume() / stop() / set_volume(v) / set_mute(m) / wait_event(timeout) → 'finished'|'error'|None / close()`，全部 async
-  - `mpv.VirtualPlayer(duration)`：不出声，按时长假装播完
+  - `playback.BasePlayer` 抽象接口：`play(url, volume, muted) / pause() / resume() / stop() / set_volume(v) / set_mute(m) / wait_event(timeout) → 'finished'|'error'|None / audio_device() / close()`，除 audio_device 外全部 async
+  - `playback.VirtualPlayer(duration)`：不出声，按时长假装播完
   - `player.py`：入口，`--virtual` 参数与 VIRTUAL=1 环境变量等效
   - `client.run(cfg)`：Task 15 实现（本任务抛 NotImplementedError 占位）
 
@@ -2666,17 +2666,21 @@ def load(path='player_config.json'):
 }
 ```
 
-- [ ] **Step 2: 写 mpv.py（抽象 + 虚拟实现）**
+- [ ] **Step 2: 写 playback.py（抽象 + 虚拟实现）**
 
-`player/mpv.py`:
+`player/playback.py`:
 
 ```python
-"""播放控制抽象：VirtualPlayer（无 libmpv，联调用）与 MpvPlayer（Task 14 实现）。"""
+"""播放控制抽象：VirtualPlayer（无 libmpv，联调用）与 MpvPlayer（Task 14 实现）。
+
+注意：本文件不叫 mpv.py —— 那样会与第三方 python-mpv 包同名，
+MpvPlayer 内部的 `import mpv` 会导入到本模块自己。
+"""
 import asyncio
 import logging
 import time
 
-log = logging.getLogger('player.mpv')
+log = logging.getLogger('player.playback')
 
 
 class BasePlayer:
@@ -2823,7 +2827,7 @@ import asyncio
 import unittest
 
 from config import load
-from mpv import VirtualPlayer
+from playback import VirtualPlayer
 
 
 class TestVirtualPlayer(unittest.IsolatedAsyncioTestCase):
@@ -2873,15 +2877,15 @@ Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: pl
 ### Task 14: 真 mpv 播放器（MpvPlayer）
 
 **Files:**
-- Modify: `player/mpv.py`（追加 MpvPlayer）
+- Modify: `player/playback.py`（追加 MpvPlayer）
 
 **Interfaces:**
 - Consumes: 无（本任务只依赖 python-mpv 与已装 libmpv；无 libmpv 时构造抛 RuntimeError，不影响虚拟模式）
-- Produces: `mpv.MpvPlayer(libmpv=None)`，接口同 BasePlayer；`wait_event` 语义：加载后 `eof_reached` → 'finished'；播放中回到 `core_idle` → 'error'
+- Produces: `playback.MpvPlayer(libmpv=None)`，接口同 BasePlayer；`wait_event` 语义：加载后 `eof_reached` → 'finished'；播放中回到 `core_idle` → 'error'
 
 - [ ] **Step 1: 实现 MpvPlayer**
 
-`player/mpv.py` 追加（在 VirtualPlayer 之后）:
+`player/playback.py` 追加（在 VirtualPlayer 之后）:
 
 ```python
 class MpvPlayer(BasePlayer):
@@ -2945,30 +2949,45 @@ class MpvPlayer(BasePlayer):
         self.mpv.terminate()
 ```
 
-- [ ] **Step 2: 单测（有 libmpv 则真跑，无则跳过不报错）**
+- [ ] **Step 2: 单测（mock 掉 python-mpv，验证路径传递与异常包装）**
 
 `player/test_player.py` 追加：
 
 ```python
-class TestMpvPlayer(unittest.IsolatedAsyncioTestCase):
-    async def test_missing_libmpv_raises_runtimeerror(self):
-        from mpv import MpvPlayer
-        import mpv as _mpv_mod
-        _ = _mpv_mod  # 仅确认模块存在
-        # 无 libmpv 环境下 python-mpv 构造抛 OSError → 我们转成 RuntimeError
-        try:
-            p = MpvPlayer('/nonexistent/mpv-2.dll')
-            await p.close()
-            # 某些环境存在全局 libmpv，这里不强制断言
-        except RuntimeError:
-            pass
-        except Exception:
-            # 其他异常（如路径格式）也不视为失败——真声测试在 Task 15 手动做
-            pass
+class TestMpvPlayer(unittest.TestCase):
+    def test_libmpv_path_passed_and_oserror_wrapped(self):
+        import sys
+        from unittest import mock
+        from playback import MpvPlayer
+
+        # 场景 1：libmpv 路径传给 MPV 构造器，且禁用 ytdl
+        fake = mock.Mock()
+        fake.MPV.return_value = mock.Mock(
+            volume=0, mute=False, pause=False, eof_reached=False, core_idle=False)
+        with mock.patch.dict(sys.modules, {'mpv': fake}):
+            p = MpvPlayer('/opt/mpv/libmpv.dylib')
+            kwargs = fake.MPV.call_args.kwargs
+            self.assertEqual(kwargs.get('libmpv'), '/opt/mpv/libmpv.dylib')
+            self.assertFalse(kwargs['ytdl'])
+            self.assertIs(p.mpv, fake.MPV.return_value)
+
+        # 场景 2：libmpv 缺失（OSError）→ 包装成 RuntimeError
+        fake2 = mock.Mock()
+        fake2.MPV.side_effect = OSError('cannot load mpv')
+        with mock.patch.dict(sys.modules, {'mpv': fake2}):
+            with self.assertRaises(RuntimeError):
+                MpvPlayer()
+
+        # 场景 3：不传路径时构造器不接 libmpv 参数
+        fake3 = mock.Mock()
+        fake3.MPV.return_value = mock.Mock()
+        with mock.patch.dict(sys.modules, {'mpv': fake3}):
+            MpvPlayer()
+            self.assertNotIn('libmpv', fake3.MPV.call_args.kwargs)
 ```
 
 Run: `cd /c/Users/Administrator/jukebox/player && python -m unittest test_player -v`
-Expected: 5 个测试 PASS（MpvPlayer 测试容错）
+Expected: 5 个测试 PASS（含 MpvPlayer 3 个断言场景）
 
 - [ ] **Step 3: 提交**
 
@@ -2998,9 +3017,9 @@ log = logging.getLogger('player.client')
 
 def make_player(cfg):
     if cfg.get('virtual'):
-        from mpv import VirtualPlayer
+        from playback import VirtualPlayer
         return VirtualPlayer(duration=float(cfg.get('virtual_duration', 10)))
-    from mpv import MpvPlayer
+    from playback import MpvPlayer
     return MpvPlayer(cfg.get('libmpv') or None)
 
 
