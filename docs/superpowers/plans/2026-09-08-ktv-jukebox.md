@@ -2065,7 +2065,8 @@ export function parseLrc(text) {
     const content = raw.replace(/\[[^\]]*\]/g, '').trim();
     if (!content) continue;
     for (const m of tags) {
-      lines.push({ t: (+m[1]) * 60 + (+m[2]) + (+(m[3] || 0)) / 1000, text: content });
+      // 小数部分对齐到毫秒：常见 2 位百分秒格式右侧补 0 到 3 位（.50→.500=0.5s），3 位毫秒原样
+      lines.push({ t: (+m[1]) * 60 + (+m[2]) + (+((m[3] || '0').padEnd(3, '0'))) / 1000, text: content });
     }
   }
   lines.sort((a, b) => a.t - b.t);
@@ -2644,6 +2645,15 @@ Expected: 通过。验证完 `kill %1`
 - [ ] **Step 4: 提交**
 
 Run: `cd /c/Users/Administrator/jukebox && git add -A && git commit -m "feat: scrolling lyrics"`
+
+#### Task 10 审查修订（实现者 DONE_WITH_CONCERNS 裁决，审查前修正）
+
+**C1. LRC 小数部分进制矛盾（计划内部矛盾）**：Task 8 的 lrc.js 对小数位一律 /1000（`[00:05.50]` → 5.05s），而本任务 Step 2 手测页期望按百分秒（→ 5.5s）；真实 LRC 主流格式正是 2 位百分秒，旧实现会让每行提前约 0.5s 高亮。裁决：lrc.js 小数位右侧补 0 对齐到 3 位毫秒再 /1000（2 位百分秒与 3 位毫秒两种格式均正确），Task 8 代码块已同步。修法：`web/js/lrc.js` 的时间计算行改为：
+```js
+      // 小数部分对齐到毫秒：常见 2 位百分秒格式右侧补 0 到 3 位（.50→.500=0.5s），3 位毫秒原样
+      lines.push({ t: (+m[1]) * 60 + (+m[2]) + (+((m[3] || '0').padEnd(3, '0'))) / 1000, text: content });
+```
+修正后本任务 Step 2 手测页 8 条断言原样全绿（5.5 / 6039.99 期望与实现一致）。
 
 ### Task 11: 已点视图（队列 + 置顶/删除）
 
