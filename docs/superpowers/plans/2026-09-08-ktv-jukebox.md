@@ -918,7 +918,7 @@ function fakeApi(overrides = {}) {
         { id: 2, name: 'VIP歌', ar: [], al: null, dt: 0, fee: 1 },
       ] } },
     }),
-    song_url: async ({ id }) => id === 1
+    song_url: async ({ id }) => String(id) === '1'
       ? { body: { data: [{ url: 'http://x/1.mp3' }] } }
       : { body: { data: [{ code: 404 }] } },
     lyric: async () => ({ body: { lrc: { lyric: '[00:00.00]词' } } }),
@@ -1534,7 +1534,7 @@ module.exports = { createRealtime };
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `cd /c/Users/Administrator/jukebox/server && node --test`（Windows 下带位置参数 `node --test test/` 会把目录当入口文件报错；无参数自动发现 test/ 目录）
-Expected: 全部 PASS（store 4 + queue 13 + netease 6 + api 4 + ws 5）
+Expected: 全部 PASS（store 4 + queue 13 + netease 5 + api 4 + ws 5）
 
 - [ ] **Step 5: 启动真服务器联调真实网易云（手动验证）**
 
