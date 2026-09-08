@@ -1,0 +1,171 @@
+'use strict';
+
+// 点歌队列状态机。纯逻辑：不接触网络/数据库，所有副作用经注入钩子完成。
+// 状态语义：
+//   current  — 正在播（或 URL 解析中）的条目 {id, song, historyId, started_at, url}
+//   queue    — 排队条目 [{id, song, historyId}]
+//   volume   — 0..100（mpv 音量）
+//   paused / muted / playerOnline — 布尔
+function createJukebox(deps) {
+  const {
+    resolveUrl,   // async (song) => {url} | {error:'vip'|'unavailable'}
+    sendToPlayer, // (cmd) => void
+    broadcast,    // () => void
+    history,      // { add(song) => id, update(id, fields) }
+    now = () => Date.now(),
+  } = deps;
+
+  const state = {
+    current: null,
+    queue: [],
+    volume: 60,
+    paused: false,
+    muted: false,
+    playerOnline: false,
+  };
+
+  let seq = 0;
+  const nextId = () => 'q' + (++seq) + Math.random().toString(36).slice(2, 6);
+
+  function getState() {
+    return {
+      current: state.current && {
+        id: state.current.id,
+        song: state.current.song,
+        started_at: state.current.started_at,
+      },
+      queue: state.queue.map(({ id, song }) => ({ id, song })),
+      volume: state.volume,
+      paused: state.paused,
+      muted: state.muted,
+      playerOnline: state.playerOnline,
+    };
+  }
+
+  function send(cmd) { sendToPlayer(cmd); }
+
+  function addToQueue(song) {
+    const item = { id: nextId(), song, historyId: history.add(song) };
+    if (state.playerOnline && !state.current) {
+      playItem(item);
+    } else {
+      state.queue.push(item);
+      broadcast();
+    }
+  }
+
+  function topQueue(id) {
+    const i = state.queue.findIndex((q) => q.id === id);
+    if (i > 0) {
+      const [item] = state.queue.splice(i, 1);
+      state.queue.unshift(item);
+      broadcast();
+    }
+  }
+
+  function removeQueue(id) {
+    const i = state.queue.findIndex((q) => q.id === id);
+    if (i >= 0) {
+      const [item] = state.queue.splice(i, 1);
+      history.update(item.historyId, { status: 'skipped', reason: '被移除', finished_at: now() });
+      broadcast();
+    }
+  }
+
+  async function playItem(item) {
+    state.current = item;
+    item.started_at = now();
+    history.update(item.historyId, { status: 'playing', started_at: item.started_at });
+    broadcast();
+    const resolved = await resolveUrl(item.song).catch(() => ({ error: 'unavailable' }));
+    if (state.current !== item) return; // 解析期间已被顶替（切歌等），结果作废
+    if (resolved.error) {
+      finishCurrent('skipped', resolved.error === 'vip' ? '版权受限' : '无法获取播放地址');
+      playNext();
+      return;
+    }
+    item.url = resolved.url;
+    send({ action: 'play', url: resolved.url, song: item.song, volume: state.volume, muted: state.muted });
+    broadcast();
+  }
+
+  function finishCurrent(status, reason) {
+    if (!state.current) return;
+    history.update(state.current.historyId, { status, reason: reason || null, finished_at: now() });
+    state.current = null;
+    broadcast();
+  }
+
+  function playNext() {
+    if (!state.current && state.queue.length && state.playerOnline) {
+      playItem(state.queue.shift());
+    } else {
+      broadcast();
+    }
+  }
+
+  // ===== 全员指令 =====
+  function skip() {
+    if (state.current) {
+      send({ action: 'stop' });
+      finishCurrent('skipped', '用户跳过');
+    }
+    playNext();
+  }
+
+  function pause() {
+    if (state.current) { state.paused = true; send({ action: 'pause' }); broadcast(); }
+  }
+
+  function resume() {
+    if (state.current) { state.paused = false; send({ action: 'resume' }); broadcast(); }
+  }
+
+  function setVolume(v) {
+    state.volume = Math.max(0, Math.min(100, Math.round(v)));
+    send({ action: 'volume', value: state.volume });
+    broadcast();
+  }
+
+  function toggleMute() {
+    state.muted = !state.muted;
+    send({ action: 'mute', value: state.muted });
+    broadcast();
+  }
+
+  // ===== 播放端事件 =====
+  function playerHello() {
+    state.playerOnline = true;
+    send({ action: 'volume', value: state.volume });
+    send({ action: 'mute', value: state.muted });
+    if (!state.current) playNext();
+    else broadcast();
+  }
+
+  function playerGone() {
+    state.playerOnline = false;
+    if (state.current) {
+      finishCurrent('skipped', '播放端断线');
+    }
+    broadcast();
+  }
+
+  function playerEvent(event, detail = {}) {
+    if (event === 'finished') {
+      finishCurrent('played', null);
+      playNext();
+    } else if (event === 'error') {
+      finishCurrent('skipped', detail.reason || '播放错误');
+      // 音频设备掉线时不自动续播（音箱没了，播下去也是漏音），恢复后由播放端重连或手动点歌触发
+      if (detail.reason !== '音频设备掉线') playNext();
+    }
+    // 'started' 由播放端在上报时自带，服务端无需处理
+  }
+
+  return {
+    getState, addToQueue, topQueue, removeQueue,
+    skip, pause, resume, setVolume, toggleMute,
+    playerHello, playerGone, playerEvent, playNext,
+  };
+}
+module.exports = { createJukebox };
