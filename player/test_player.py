@@ -42,16 +42,19 @@ class TestMpvPlayer(unittest.TestCase):
         from unittest import mock
         from playback import MpvPlayer
 
-        # 场景 1：libmpv 路径传给 MPV 构造器，且禁用 ytdl
+        # 场景 1：DLL 目录加进 PATH（python-mpv 导入期靠 PATH 找 DLL），构造器不传 libmpv
         fake = mock.Mock()
         fake.MPV.return_value = mock.Mock(
             volume=0, mute=False, pause=False, eof_reached=False, core_idle=False)
         with mock.patch.dict(sys.modules, {'mpv': fake}):
             p = MpvPlayer('/opt/mpv/libmpv.dylib')
             kwargs = fake.MPV.call_args.kwargs
-            self.assertEqual(kwargs.get('libmpv'), '/opt/mpv/libmpv.dylib')
+            self.assertNotIn('libmpv', kwargs)
             self.assertFalse(kwargs['ytdl'])
             self.assertIs(p.mpv, fake.MPV.return_value)
+            import os
+            expected = os.path.dirname(os.path.abspath('/opt/mpv/libmpv.dylib'))
+            self.assertTrue(os.environ['PATH'].startswith(expected + os.pathsep))
 
         # 场景 2：libmpv 缺失（OSError）→ 包装成 RuntimeError
         fake2 = mock.Mock()

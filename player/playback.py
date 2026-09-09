@@ -5,6 +5,7 @@ MpvPlayer 内部的 `import mpv` 会导入到本模块自己。
 """
 import asyncio
 import logging
+import os
 import time
 
 log = logging.getLogger('player.playback')
@@ -86,11 +87,15 @@ class MpvPlayer(BasePlayer):
     """基于 python-mpv 的真实播放器。libmpv 需已安装（README/setup 脚本有步骤）。"""
 
     def __init__(self, libmpv=None):
+        # python-mpv 在 import 阶段就按 PATH 找 DLL；把 DLL 所在目录加进 PATH 即可。
+        # 注意：不要给 MPV 构造器传 libmpv 参数——python-mpv 会把未知 kwarg 当 mpv 选项，
+        # 直接报 "mpv option does not exist"。
+        if libmpv:
+            dll_dir = os.path.dirname(os.path.abspath(libmpv))
+            os.environ['PATH'] = dll_dir + os.pathsep + os.environ.get('PATH', '')
         import mpv
         try:
             kwargs = {'ytdl': False, 'input_default_bindings': False, 'input_vo_keyboard': False}
-            if libmpv:
-                kwargs['libmpv'] = libmpv
             self.mpv = mpv.MPV(**kwargs)
         except OSError as e:
             raise RuntimeError(f'找不到 libmpv，请先安装 mpv（见 README）：{e}')

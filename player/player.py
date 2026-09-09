@@ -29,9 +29,11 @@ def main():
     cfg['server'] = str(cfg['server']).replace('http://', 'ws://').replace('https://', 'wss://')
     if not str(cfg['server']).endswith('/ws'):
         cfg['server'] += '/ws'   # 所有 scheme 统一补 /ws（Task 15 C2 修订：ws:// 直连也需补）
-    # Windows 下自动找 libmpv dll
+    # Windows 下自动找 libmpv dll（新版 mpv-dev 包叫 libmpv-2.dll，旧版叫 mpv-2.dll）
     if sys.platform == 'win32' and not cfg.get('libmpv'):
-        hits = glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'libmpv', '**', 'mpv-2.dll'), recursive=True)
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'libmpv')
+        hits = glob.glob(os.path.join(base, '**', 'mpv-2.dll'), recursive=True) \
+            + glob.glob(os.path.join(base, '**', 'libmpv-2.dll'), recursive=True)
         if hits:
             cfg['libmpv'] = hits[0]
     log.info('server=%s virtual=%s libmpv=%s', cfg['server'], cfg['virtual'], cfg.get('libmpv') or 'auto')
