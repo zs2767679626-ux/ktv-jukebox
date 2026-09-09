@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 echo === KTV 点歌台播放端安装 ===
 
@@ -29,11 +29,12 @@ if not exist libmpv\mpv-2.dll if not exist libmpv\libmpv-2.dll (
 )
 
 if not exist player_config.json (
-  copy player_config.example.json player_config.json >nul
-  echo.
-  echo 请填写 player_config.json 里的 server 和 token：
-  notepad player_config.json
-  pause
+  REM 口令自动取自服务器 server\.env（安装第一步设置的口令），无需手填，避免两处不一致
+  set TOKEN=
+  for /f "tokens=2 delims==" %%t in ('findstr /b "DEVICE_TOKEN=" "..\server\.env" 2^>nul') do set TOKEN=%%t
+  if "!TOKEN!"=="" set TOKEN=ktv-2026-xj
+  > player_config.json echo {"server": "ws://127.0.0.1:3000", "token": "!TOKEN!", "libmpv": "", "virtual": false}
+  echo [OK] player_config.json 已自动生成（token=!TOKEN!，与服务器一致）
 )
 
 echo === 虚拟模式试运行（确认能连上服务器）===
