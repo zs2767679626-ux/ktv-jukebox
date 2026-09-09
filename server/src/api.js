@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 
-function createApi({ netease, store }) {
+function createApi({ netease, store, lanUrls }) {
   const r = express.Router();
   const wrap = (fn) => (req, res) =>
     fn(req, res).catch((e) => {
@@ -10,6 +10,9 @@ function createApi({ netease, store }) {
     });
 
   r.get('/health', (req, res) => res.json({ ok: true }));
+
+  // 网页端「扫码点歌」二维码内容：手机能访问的局域网地址
+  r.get('/server-info', (req, res) => res.json({ lanUrls: lanUrls || [] }));
 
   r.post('/search', wrap(async (req, res) => {
     const q = String(req.body?.q || '').trim();

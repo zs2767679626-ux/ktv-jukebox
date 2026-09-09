@@ -28,7 +28,7 @@ async function withServer(handler, extra = {}) {
   Object.assign(fake, extra.netease);
   const app = express();
   app.use(express.json());
-  app.use('/api', createApi({ netease: fake, store: extra.store || fakeStore }));
+  app.use('/api', createApi({ netease: fake, store: extra.store || fakeStore, lanUrls: extra.lanUrls || [] }));
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   const port = server.address().port;
@@ -54,6 +54,13 @@ test('health 与 search', async () => {
     assert.equal(s.json.results[0].title, '晴天');
     assert.equal(s.json.results[0].fee, 0);
   });
+});
+
+test('server-info 返回局域网地址（扫码点歌二维码用）', async () => {
+  await withServer(async (port) => {
+    const r = await req(port, 'GET', '/api/server-info');
+    assert.deepEqual(r.json, { lanUrls: ['http://192.168.140.67:3000'] });
+  }, { lanUrls: ['http://192.168.140.67:3000'] });
 });
 
 test('search 空关键词返回空数组', async () => {

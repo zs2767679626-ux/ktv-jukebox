@@ -118,6 +118,7 @@ body[data-view="queue"] #view-queue { display: block; }
 .qr { text-align: center; margin-top: 12px; }
 @media (max-width: 899px) { .qr { display: none; } }
 .qr img, .qr canvas { border-radius: 8px; }
+.qr .qr-tip { font-size: 12px; color: var(--dim); margin: 10px 0 0; }
 .offline { color: var(--accent); }
 @media (min-width: 900px) {
   .toast { bottom: 30px; }
