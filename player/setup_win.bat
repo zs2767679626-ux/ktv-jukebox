@@ -29,7 +29,7 @@ if not exist player_config.json (
   pause
 )
 
-echo === 虚拟模式试运行（确认能连上云端）===
+echo === 虚拟模式试运行（确认能连上服务器）===
 python player.py --virtual
 
 echo === 注册开机自启 ===

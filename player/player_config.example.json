@@ -1,6 +1,6 @@
 {
-  "server": "https://你的应用.app.workbuddy.link",
-  "token": "换成云端设备口令",
+  "server": "ws://127.0.0.1:3000",
+  "token": "与服务器 server/.env 里的 DEVICE_TOKEN 一致",
   "libmpv": "",
   "virtual": false
 }

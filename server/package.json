@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "start": "node bin/server.js",
+    "start": "node --env-file-if-exists=.env bin/server.js",
     "test": "node --test"
   },
   "engines": {
