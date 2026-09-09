@@ -20,9 +20,6 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
   .tabs { display: none; }
   .panel { border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--card); padding: 16px; overflow-y: auto; max-height: calc(100vh - 90px); }
-  /* 点歌栏纵向弹性布局：署名压到栏底，与播放栏底部扫码卡片对齐 */
-  body[data-view="point"] #view-point { display: flex; flex-direction: column; }
-  .point-sign { margin-top: auto; }
 }
 /* 移动端：面板隐藏，标签切换 */
 .panel { min-height: 300px; }
@@ -128,6 +125,10 @@ body[data-view="queue"] #view-queue { display: block; }
 .offline { color: var(--accent); }
 @media (min-width: 768px) {
   .toast { bottom: 30px; }
+  /* 点歌栏纵向弹性布局：署名压到栏底，与播放栏底部扫码卡片对齐。
+     注意必须写在 body[data-view] 的 display:block 规则之后，否则会被覆盖。 */
+  body[data-view="point"] #view-point { display: flex; flex-direction: column; }
+  .point-sign { margin-top: auto; }
 }
 /* 网易云登录（顶栏徽标 + 扫码弹窗） */
 .top-right { display: flex; align-items: center; gap: 10px; }
