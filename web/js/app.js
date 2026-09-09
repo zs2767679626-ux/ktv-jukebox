@@ -1,6 +1,7 @@
 import { createWsClient } from './ws-client.js';
 import { store } from './state.js';
 import { bindActions } from './actions.js';
+import { initNeteaseLogin } from './netease-login.js';
 import * as pointView from './views/point.js';
 import * as playerView from './views/player.js';
 import * as queueView from './views/queue.js';
@@ -58,6 +59,8 @@ function renderAll() {
 store.subscribe(renderAll);
 ws.connect();
 renderAll();
+
+initNeteaseLogin({ toast });
 
 // 移动端标签切换
 tabsEl.addEventListener('click', (e) => {

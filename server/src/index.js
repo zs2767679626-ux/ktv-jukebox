@@ -9,7 +9,7 @@ const { createRealtime } = require('./ws');
 function createApp({ netease, history, isPlayerToken, webDir }) {
   const app = express();
   app.use(express.json());
-  app.use('/api', createApi({ netease }));
+  app.use('/api', createApi({ netease, store: history }));
   app.use(express.static(webDir));
   // SPA 兜底：非 /api 路径回 index.html
   app.get(/^\/(?!api).*/, (req, res) => res.sendFile(path.join(webDir, 'index.html')));

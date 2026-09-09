@@ -15,6 +15,13 @@ function createStore(dbPath) {
       started_at INTEGER, finished_at INTEGER
     );
   `);
+  // 简单键值表：网易云登录 Cookie 等运行配置（重启保留）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+  `);
   const addStmt = db.prepare(`
     INSERT INTO history (song_id,title,artist,album,text,duration_ms,fee,status,requested_at)
     VALUES (@song_id,@title,@artist,@album,@text,@duration_ms,@fee,'requested',@requested_at)`);
@@ -23,6 +30,9 @@ function createStore(dbPath) {
     WHERE id=@id`);
   const getStmt = db.prepare(`SELECT * FROM history WHERE id=?`);
   const listStmt = db.prepare(`SELECT * FROM history ORDER BY id DESC LIMIT ?`);
+  const getSetStmt = db.prepare(`SELECT value FROM settings WHERE key=?`);
+  const putSetStmt = db.prepare(`INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
+  const delSetStmt = db.prepare(`DELETE FROM settings WHERE key=?`);
 
   return {
     add(song) {
@@ -51,6 +61,16 @@ function createStore(dbPath) {
     },
     list(limit = 50) {
       return listStmt.all(limit);
+    },
+    getSetting(key) {
+      const row = getSetStmt.get(key);
+      return row ? row.value : null;
+    },
+    setSetting(key, value) {
+      putSetStmt.run(key, value);
+    },
+    deleteSetting(key) {
+      delSetStmt.run(key);
     },
     close() {
       db.close();

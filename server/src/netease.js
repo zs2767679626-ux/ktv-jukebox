@@ -2,9 +2,11 @@
 
 // 网易云 API 封装。所有函数返回归一化结构，对调用方屏蔽底层细节。
 // 注意：songUrl 对 VIP/付费歌返回 error:'vip'，调用方（queue）据此跳过。
-// 配置会员 Cookie（NETEASE_COOKIE）后，VIP 歌能拿到真实播放地址，正常播放。
+// 登录态：构造时可传初始 Cookie（NETEASE_COOKIE 环境变量），也可运行时扫码登录（setCookie），
+// 登录后 VIP 歌能拿到真实播放地址，正常播放。
 function createNetease(api, opts = {}) {
-  const { realIP = '', cookie = '' } = opts;
+  const { realIP = '' } = opts;
+  let cookie = opts.cookie || '';
 
   function normalize(s) {
     return {
@@ -39,6 +41,46 @@ function createNetease(api, opts = {}) {
   async function lyric(id) {
     const res = await api.lyric({ id });
     return res.body?.lrc?.lyric || null;
+  }
+
+  // —— 登录态：二维码登录 + 状态查询 ——
+  // 三步扫码登录：qrKey 取 unikey → qrCreate 生成二维码图 → qrCheck 轮询结果。
+  async function qrKey() {
+    const res = await api.login_qr_key({ realIP });
+    return res.body?.data?.unikey || null;
+  }
+
+  async function qrCreate(key) {
+    const res = await api.login_qr_create({ key, qrimg: true, realIP });
+    return res.body?.data?.qrimg || null;
+  }
+
+  // 返回 { code, cookie? }：801 待扫码，802 已扫码待确认，803 登录成功（带 cookie），800 过期
+  async function qrCheck(key) {
+    const res = await api.login_qr_check({ key, realIP });
+    return res.body || {};
+  }
+
+  function setCookie(c) {
+    cookie = String(c || '');
+  }
+
+  function clearCookie() {
+    cookie = '';
+  }
+
+  // 当前登录态：null = 未登录；否则 { loggedIn, nickname, vipType }
+  async function loginStatus() {
+    if (!cookie) return null;
+    try {
+      const res = await api.login_status({ cookie, realIP });
+      const d = res.body?.data || res.body || {};
+      if (d.code !== 200) return null;
+      const p = d.profile || {};
+      return { loggedIn: true, nickname: p.nickname || '', vipType: p.vipType || 0 };
+    } catch (e) {
+      return null;
+    }
   }
 
   async function artists(type = 'male', initial) {
@@ -80,6 +122,6 @@ function createNetease(api, opts = {}) {
     return ((res.body?.playlist?.tracks) || []).slice(0, 100).map(normalize);
   }
 
-  return { search, songUrl, lyric, artists, artistSongs, toplists, toplistSongs, catlist, stylePlaylists, playlistSongs };
+  return { search, songUrl, lyric, artists, artistSongs, toplists, toplistSongs, catlist, stylePlaylists, playlistSongs, qrKey, qrCreate, qrCheck, setCookie, clearCookie, loginStatus };
 }
 module.exports = { createNetease };

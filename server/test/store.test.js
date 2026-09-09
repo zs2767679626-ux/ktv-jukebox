@@ -11,6 +11,18 @@ function tempDb() {
   return path.join(dir, 'test.db');
 }
 
+test('settings 键值读写删（netease_cookie 场景）', () => {
+  const store = createStore(tempDb());
+  assert.equal(store.getSetting('netease_cookie'), null);
+  store.setSetting('netease_cookie', 'MUSIC_U=abc');
+  assert.equal(store.getSetting('netease_cookie'), 'MUSIC_U=abc');
+  store.setSetting('netease_cookie', 'MUSIC_U=xyz'); // 覆盖
+  assert.equal(store.getSetting('netease_cookie'), 'MUSIC_U=xyz');
+  store.deleteSetting('netease_cookie');
+  assert.equal(store.getSetting('netease_cookie'), null);
+  store.close();
+});
+
 test('add 创建 requested 记录并返回自增 id', () => {
   const store = createStore(tempDb());
   const id = store.add({ text: '晴天 周杰伦', song_id: '186016', title: '晴天', artist: '周杰伦', duration_ms: 269000, fee: 0 });

@@ -69,6 +69,34 @@ test('songUrl：未配置 cookie 时请求不带 cookie 字段', async () => {
   assert.equal('cookie' in calls[0], false);
 });
 
+test('扫码登录：qrKey/qrCreate/qrCheck 流程，setCookie 后取歌地址带新 cookie', async () => {
+  const calls = [];
+  const n = createNetease(fakeApi({
+    login_qr_key: async () => ({ body: { data: { unikey: 'K1' } } }),
+    login_qr_create: async () => ({ body: { data: { qrimg: 'base64img' } } }),
+    login_qr_check: async ({ key }) => (key === 'K1' ? { body: { code: 803, cookie: 'MUSIC_U=new' } } : { body: { code: 800 } }),
+    login_status: async () => ({ body: { data: { code: 200, profile: { nickname: '会员号', vipType: 110 } } } }),
+    song_url: async (q) => { calls.push(q); return { body: { data: [{ code: -110 }] } }; },
+  }));
+  assert.equal(await n.qrKey(), 'K1');
+  assert.equal(await n.qrCreate('K1'), 'base64img');
+  const chk = await n.qrCheck('K1');
+  assert.equal(chk.code, 803);
+  n.setCookie(chk.cookie);
+  assert.deepEqual(await n.loginStatus(), { loggedIn: true, nickname: '会员号', vipType: 110 });
+  await n.songUrl('1');
+  assert.equal(calls[0].cookie, 'MUSIC_U=new');
+  assert.equal(await n.qrCheck('K2').then((b) => b.code), 800);
+});
+
+test('loginStatus：未登录返回 null；clearCookie 后返回 null', async () => {
+  const n = createNetease(fakeApi());
+  assert.equal(await n.loginStatus(), null);
+  n.setCookie('MUSIC_U=x');
+  n.clearCookie();
+  assert.equal(await n.loginStatus(), null);
+});
+
 test('lyric 为空对象时返回 null', async () => {
   const n = createNetease(fakeApi({ lyric: async () => ({ body: {} }) }));
   assert.equal(await n.lyric('1'), null);
