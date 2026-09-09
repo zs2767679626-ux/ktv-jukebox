@@ -7,4 +7,6 @@ module.exports = {
   dbPath: process.env.DB_PATH || path.join(__dirname, '..', 'data', 'jukebox.db'),
   deviceToken: process.env.DEVICE_TOKEN || 'dev-token-change-me',
   neteaseRealIP: process.env.NETEASE_REAL_IP || '',
+  // 可选：会员账号 Cookie（MUSIC_U=xxx），配置后 VIP 歌可正常播放
+  neteaseCookie: process.env.NETEASE_COOKIE || '',
 };

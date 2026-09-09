@@ -49,6 +49,26 @@ test('songUrl：无 url 且非 404 → 降级 128k 重试后仍无 → unavailab
   assert.deepEqual(await n.songUrl('1'), { error: 'unavailable' });
 });
 
+test('songUrl：配置了 cookie 时透传给 song_url（320k 与 128k 重试都带）', async () => {
+  const calls = [];
+  const n = createNetease(fakeApi({
+    song_url: async (q) => { calls.push(q); return { body: { data: [{ code: -110 }] } }; },
+  }), { cookie: 'MUSIC_U=abc123' });
+  await n.songUrl('1');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].cookie, 'MUSIC_U=abc123');
+  assert.equal(calls[1].cookie, 'MUSIC_U=abc123');
+});
+
+test('songUrl：未配置 cookie 时请求不带 cookie 字段', async () => {
+  const calls = [];
+  const n = createNetease(fakeApi({
+    song_url: async (q) => { calls.push(q); return { body: { data: [{ url: 'http://x/1.mp3' }] } }; },
+  }));
+  await n.songUrl('1');
+  assert.equal('cookie' in calls[0], false);
+});
+
 test('lyric 为空对象时返回 null', async () => {
   const n = createNetease(fakeApi({ lyric: async () => ({ body: {} }) }));
   assert.equal(await n.lyric('1'), null);

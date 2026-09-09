@@ -10,7 +10,7 @@ const neteaseApi = require('NeteaseCloudMusicApi');
 require('fs').mkdirSync(path.dirname(config.dbPath), { recursive: true });
 
 const store = createStore(config.dbPath);
-const netease = createNetease(neteaseApi, { realIP: config.neteaseRealIP });
+const netease = createNetease(neteaseApi, { realIP: config.neteaseRealIP, cookie: config.neteaseCookie });
 const { server } = createApp({
   netease,
   history: store,

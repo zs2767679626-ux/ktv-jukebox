@@ -2,8 +2,9 @@
 
 // 网易云 API 封装。所有函数返回归一化结构，对调用方屏蔽底层细节。
 // 注意：songUrl 对 VIP/付费歌返回 error:'vip'，调用方（queue）据此跳过。
+// 配置会员 Cookie（NETEASE_COOKIE）后，VIP 歌能拿到真实播放地址，正常播放。
 function createNetease(api, opts = {}) {
-  const { realIP = '' } = opts;
+  const { realIP = '', cookie = '' } = opts;
 
   function normalize(s) {
     return {
@@ -23,6 +24,7 @@ function createNetease(api, opts = {}) {
 
   async function songUrl(id) {
     const base = { id, realIP };
+    if (cookie) base.cookie = cookie;
     const res = await api.song_url({ ...base, br: 320000 });
     const data = (res.body?.data || [])[0] || {};
     if (data.url) return { url: data.url };
