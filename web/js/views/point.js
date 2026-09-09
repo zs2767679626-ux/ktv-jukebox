@@ -21,7 +21,8 @@ export function render(el, ctx) {
       <h2>分类点歌</h2>
       <div class="grid" id="tiles">${tilesHtml()}</div>
     </div>
-    <div class="card" id="subpage" style="display:none"></div>`;
+    <div class="card" id="subpage" style="display:none"></div>
+    <p class="point-sign">追寻AI作品<br />vx:BMWx5MMMM</p>`;
   bind(el, ctx);
 }
 

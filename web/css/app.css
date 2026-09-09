@@ -20,6 +20,9 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
   .tabs { display: none; }
   .panel { border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--card); padding: 16px; overflow-y: auto; max-height: calc(100vh - 90px); }
+  /* 点歌栏纵向弹性布局：署名压到栏底，与播放栏底部扫码卡片对齐 */
+  body[data-view="point"] #view-point { display: flex; flex-direction: column; }
+  .point-sign { margin-top: auto; }
 }
 /* 移动端：面板隐藏，标签切换 */
 .panel { min-height: 300px; }
@@ -120,7 +123,8 @@ body[data-view="queue"] #view-queue { display: block; }
 @media (max-width: 767px) { .qr { display: none; } }
 .qr img, .qr canvas { border-radius: 8px; }
 .qr .qr-tip { font-size: 12px; color: var(--dim); margin: 10px 0 0; }
-.qr .qr-sign { font-size: 12px; color: var(--dim); margin: 10px 0 0; }
+/* 署名（点歌栏底部，桌面端压到底与扫码卡片对齐） */
+.point-sign { text-align: center; font-size: 12px; color: var(--dim); margin: 12px 0 0; }
 .offline { color: var(--accent); }
 @media (min-width: 768px) {
   .toast { bottom: 30px; }
