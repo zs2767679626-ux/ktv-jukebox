@@ -39,7 +39,7 @@ const ctx = {
   actions,
   toast,
   serverNow: () => store.serverNow(),
-  isDesktop: () => window.matchMedia('(min-width: 900px)').matches,
+  isDesktop: () => window.matchMedia('(min-width: 768px)').matches,
 };
 
 const views = {
