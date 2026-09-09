@@ -71,5 +71,27 @@ class TestMpvPlayer(unittest.TestCase):
             self.assertNotIn('libmpv', fake3.MPV.call_args.kwargs)
 
 
+class TestMpvPlayerWait(unittest.IsolatedAsyncioTestCase):
+    async def test_core_idle_grace_period(self):
+        """loadfile 后 10 秒缓冲期内 core_idle 不算失败（联网取流中），超时才报 error。"""
+        import sys
+        import time
+        from unittest import mock
+        from playback import MpvPlayer
+
+        fake = mock.Mock()
+        fake.MPV.return_value = mock.Mock(
+            volume=0, mute=False, pause=False, eof_reached=False, core_idle=True)
+        with mock.patch.dict(sys.modules, {'mpv': fake}):
+            p = MpvPlayer()
+            await p.play('http://x', 60, False)
+            # 加载后 5 秒：缓冲期内，不判失败
+            p._load_at = time.time() - 5
+            self.assertIsNone(await p.wait_event(timeout=0.3))
+            # 加载后 11 秒仍 idle：判加载失败
+            p._load_at = time.time() - 11
+            self.assertEqual(await p.wait_event(timeout=0.3), 'error')
+
+
 if __name__ == '__main__':
     unittest.main()

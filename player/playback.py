@@ -100,10 +100,12 @@ class MpvPlayer(BasePlayer):
         except OSError as e:
             raise RuntimeError(f'找不到 libmpv，请先安装 mpv（见 README）：{e}')
         self._loaded = False
+        self._load_at = 0
 
     async def play(self, url, volume, muted):
         self.mpv.loadfile(url)
         self._loaded = True
+        self._load_at = time.time()
         self.mpv.volume = int(volume)
         self.mpv.mute = bool(muted)
 
@@ -131,8 +133,9 @@ class MpvPlayer(BasePlayer):
                 if self.mpv.eof_reached:
                     self._loaded = False
                     return 'finished'
-                if self.mpv.core_idle:
-                    # 载入后回到 idle：加载失败/地址失效
+                # loadfile 后 mpv 联网取流期间 core_idle 仍为 True，立即判失败会误杀；
+                # 给足缓冲时间（实测 0.3s 起播、慢网更久），10 秒后仍 idle 才算加载失败
+                if self.mpv.core_idle and time.time() - self._load_at >= 10:
                     self._loaded = False
                     return 'error'
         return None
