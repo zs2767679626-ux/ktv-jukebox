@@ -42,6 +42,7 @@ export function render(el, ctx) {
       <h2>扫码点歌</h2>
       <div id="qrcode"></div>
       <p class="qr-tip">同事用手机扫一扫，直接进入点歌台</p>
+      <p class="qr-sign">追寻AI作品<br />vx:BMWx5MMMM</p>
     </div>`;
   bind(el, ctx);
   update(el, ctx);
