@@ -114,6 +114,8 @@ class MpvPlayer(BasePlayer):
 
     async def resume(self):
         self.mpv.pause = False
+        # 恢复后重新给加载缓冲期，避免长时间暂停刚恢复就被误判失败
+        self._load_at = time.time()
 
     async def stop(self):
         self._loaded = False
@@ -134,8 +136,9 @@ class MpvPlayer(BasePlayer):
                     self._loaded = False
                     return 'finished'
                 # loadfile 后 mpv 联网取流期间 core_idle 仍为 True，立即判失败会误杀；
-                # 给足缓冲时间（实测 0.3s 起播、慢网更久），10 秒后仍 idle 才算加载失败
-                if self.mpv.core_idle and time.time() - self._load_at >= 10:
+                # 给足缓冲时间（实测 0.3s 起播、慢网更久），10 秒后仍 idle 才算加载失败。
+                # 注意：暂停时 mpv 的 core_idle 也是 True（实测），必须排除，否则暂停会被误判成加载失败
+                if self.mpv.core_idle and not self.mpv.pause and time.time() - self._load_at >= 10:
                     self._loaded = False
                     return 'error'
         return None

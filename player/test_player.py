@@ -92,6 +92,22 @@ class TestMpvPlayerWait(unittest.IsolatedAsyncioTestCase):
             p._load_at = time.time() - 11
             self.assertEqual(await p.wait_event(timeout=0.3), 'error')
 
+    async def test_paused_core_idle_not_error(self):
+        """暂停时 mpv 的 core_idle 为 True（实测），不能判加载失败。"""
+        import sys
+        import time
+        from unittest import mock
+        from playback import MpvPlayer
+
+        fake = mock.Mock()
+        fake.MPV.return_value = mock.Mock(
+            volume=0, mute=False, pause=True, eof_reached=False, core_idle=True)
+        with mock.patch.dict(sys.modules, {'mpv': fake}):
+            p = MpvPlayer()
+            await p.play('http://x', 60, False)
+            p._load_at = time.time() - 30  # 早已超过缓冲期，但处于暂停 → 不判失败
+            self.assertIsNone(await p.wait_event(timeout=0.3))
+
 
 if __name__ == '__main__':
     unittest.main()
