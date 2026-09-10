@@ -8,9 +8,11 @@ echo "=== 安装 libmpv（brew mpv）==="
 brew install mpv
 echo "=== 安装 Python 依赖 ==="
 "$PY" -m pip install -r requirements.txt
-[ -f player_config.json ] || cp player_config.example.json player_config.json
-echo "请编辑 player_config.json 填入 server 和 token，改完按回车继续"
-read -r _
+if [ ! -f player_config.json ]; then
+  cp player_config.example.json player_config.json
+  echo "请编辑 player_config.json 填入 server 和 token，改完按回车继续"
+  read -r _
+fi
 echo "=== 虚拟模式试运行（确认能连上云端）==="
 "$PY" player.py --virtual
 echo "=== 注册开机自启（LaunchAgent）==="
@@ -28,10 +30,14 @@ cat > "$PLIST" <<EOF
   <key>WorkingDirectory</key><string>$(pwd)</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>EnvironmentVariables</key><dict>
+    <key>DYLD_LIBRARY_PATH</key><string>/opt/homebrew/lib:/usr/local/lib</string>
+  </dict>
   <key>StandardOutPath</key><string>$(pwd)/player.log</string>
   <key>StandardErrorPath</key><string>$(pwd)/player.log</string>
 </dict></plist>
 EOF
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load "$PLIST"
-echo "安装完成！播放前把系统输出切到蓝牙音箱，然后重启或执行: launchctl start com.jukebox.player"
+chmod +x 启动播放端.command 停止播放端.command 2>/dev/null || true
+echo "安装完成！播放前把系统输出切到蓝牙音箱，然后重启或双击「启动播放端.command」"
