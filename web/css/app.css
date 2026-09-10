@@ -130,12 +130,12 @@ body[data-view="queue"] #view-queue { display: block; }
   body[data-view="point"] #view-point { display: flex; flex-direction: column; }
   .point-sign { margin-top: auto; }
 }
-/* 网易云登录（顶栏徽标 + 扫码弹窗） */
-.top-right { display: flex; align-items: center; gap: 10px; }
-.netease-badge { background: none; border: 1px solid var(--border); color: var(--dim);
+/* 双平台登录（顶栏徽标 + 扫码弹窗 + 徽标面板） */
+.top-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.login-badge { background: none; border: 1px solid var(--border); color: var(--dim);
   border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; font-family: inherit;
   white-space: nowrap; }
-.netease-badge.logged-in { color: var(--green); border-color: var(--green); }
+.login-badge.logged-in { color: var(--green); border-color: var(--green); }
 .nlogin-mask { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none;
   align-items: center; justify-content: center; z-index: 50; }
 .nlogin-mask.show { display: flex; }
@@ -147,7 +147,20 @@ body[data-view="queue"] #view-queue { display: block; }
 .nlogin .qr-wrap img { width: 180px; height: 180px; display: block; }
 .nlogin .qr-tip { font-size: 12px; color: var(--dim); margin: 10px 0 0; min-height: 18px; }
 .nlogin .btns { margin-top: 14px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-.nlogin .logout { display: none; }
 .nlogin .btn.danger { color: var(--red); border-color: var(--red); }
 .nlogin.hide-qr .qr-wrap, .nlogin.hide-qr .qr-tip, .nlogin.hide-qr .refresh { display: none; }
-.nlogin.hide-qr .logout { display: inline-block; }
+/* 徽标面板（点击已登录徽标弹出：当前账号 + 换账号 + 退出登录） */
+.login-panel { position: fixed; background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px; width: 180px; display: none; z-index: 60;
+  box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+.login-panel.show { display: block; }
+.login-panel .account { margin: 0 0 10px; font-size: 13px; color: var(--fg);
+  word-break: break-all; }
+.login-panel .btns { display: flex; gap: 8px; justify-content: center; }
+/* 点歌页平台切换（网易云 / QQ音乐） */
+.prov-switch { display: flex; gap: 6px; margin: 10px 0 12px; }
+.prov-switch .prov { flex: 1; background: none; border: 1px solid var(--border); color: var(--dim);
+  border-radius: 999px; padding: 6px 10px; font-size: 13px; cursor: pointer; font-family: inherit; }
+.prov-switch .prov.active { color: #000; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+/* 队列/播放中的歌曲来源小图标 */
+.prov-ico { margin-right: 5px; font-size: 13px; }

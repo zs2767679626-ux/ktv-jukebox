@@ -1,7 +1,16 @@
 // 点歌视图：搜索 + 分类宫格 + 子页面（歌手/榜单/风格/拼音/歌单/歌曲列表）
 // render 幂等：首次构建 DOM 并挂一次性委托监听；后续调用直接返回（浏览中的子页不被状态刷新打断）。
+// 双平台：顶部切换网易云/QQ音乐，所有请求带 provider，选择记忆在 localStorage。
 
 let langMap = null; // 语种榜过滤结果（模块级，供 tab 切换）
+let provider = localStorage.getItem('jukebox_provider') || 'netease'; // 当前平台
+// 各平台「热门榜/新歌榜」榜单 id 与语种榜名称关键词
+const HOT_IDS = { netease: '3778678', qq: '26' };
+const NEW_IDS = { netease: '3779629', qq: '27' };
+const LANG_KEYS = {
+  netease: [['华语', '华语'], ['欧美', '欧美'], ['日韩', '日本', '日语', '韩语', '韩国'], ['粤语', '粤语']],
+  qq: [['华语', '内地', '台湾'], ['粤语', '香港'], ['欧美', '欧美'], ['日韩', '日本', '韩国']],
+};
 
 export function render(el, ctx) {
   if (el.__jukeboxPoint) return;
@@ -9,6 +18,10 @@ export function render(el, ctx) {
   el.innerHTML = `
     <div class="card">
       <h2>点首歌</h2>
+      <div class="prov-switch">
+        <button class="prov" data-prov="netease">🎵 网易云</button>
+        <button class="prov" data-prov="qq">🎶 QQ音乐</button>
+      </div>
       <div class="search-box">
         <div class="input-row">
           <input id="q" type="text" placeholder="歌名或歌手：周杰伦、晴天、海阔天空 Beyond…" autocomplete="off" />
@@ -50,12 +63,10 @@ const TILES = [
   { icon: '🌍', name: '语种', page: 'toplist', arg: { lang: true } },
   { icon: '🎨', name: '风格', page: 'styles' },
   { icon: '🔤', name: '拼音A-Z', page: 'letters' },
-  { icon: '🔥', name: '热门榜', page: 'toplist', arg: { id: '3778678' } },
-  { icon: '✨', name: '新歌榜', page: 'toplist', arg: { id: '3779629' } },
+  { icon: '🔥', name: '热门榜', page: 'toplist', arg: { id: 'hot' } },
+  { icon: '✨', name: '新歌榜', page: 'toplist', arg: { id: 'new' } },
 ];
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
-// 语种榜关键词过滤（网易云榜单名包含这些词）
-const LANG_KEYS = [['华语', '华语'], ['欧美', '欧美'], ['日韩', '日本', '日语', '韩语', '韩国'], ['粤语', '粤语']];
 
 function tilesHtml() {
   return TILES.map((t) => `
@@ -80,6 +91,21 @@ function SONG_ROW(s) {
 function bind(el, ctx) {
   const { actions } = ctx;
   const $ = (s) => el.querySelector(s);
+
+  // 平台切换 UI：初始高亮 + 点击切换（切走时关闭子页、重搜当前关键词）
+  function syncSwitchUI() {
+    el.querySelectorAll('.prov').forEach((b) => b.classList.toggle('active', b.dataset.prov === provider));
+  }
+  syncSwitchUI();
+  function switchProvider(p) {
+    if (p === provider) return;
+    provider = p;
+    localStorage.setItem('jukebox_provider', p);
+    syncSwitchUI();
+    hideSub();
+    const q = $('#q').value.trim();
+    if (q) search(q);
+  }
 
   function request(song) {
     actions.request({ text: `${song.title || ''} ${song.artist || ''}`.trim(), ...song });
@@ -122,7 +148,7 @@ function bind(el, ctx) {
     const mySeq = ++seq;
     try {
       const data = await getJSON('/api/search', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ q }),
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ q, provider }),
       });
       if (mySeq !== seq) return;
       renderCandidates(data.results || []);
@@ -150,10 +176,11 @@ function bind(el, ctx) {
     $('#subpage').style.display = 'block';
     $('#subpage').innerHTML = '<div class="loading">加载中…</div>';
     try {
-      const data = await getJSON(`/api/artists?type=${type}`);
+      const data = await getJSON(`/api/artists?type=${type}&provider=${provider}`);
       const list = data.artists || [];
-      $('#subpage').innerHTML = subhead('歌手') +
-        tabRowHtml([['male', '男歌手'], ['female', '女歌手'], ['band', '组合']], type) +
+      // QQ 歌手列表不分男女/组合，不显示分类 tab
+      const tabs = provider === 'qq' ? '' : tabRowHtml([['male', '男歌手'], ['female', '女歌手'], ['band', '组合']], type);
+      $('#subpage').innerHTML = subhead('歌手') + tabs +
         list.map((a) => `
         <div class="song-row"><div class="body"><div class="name">${esc(a.name)}</div></div>
         <button class="btn" data-artist="${esc(a.id)}">进去</button></div>`).join('');
@@ -177,7 +204,7 @@ function bind(el, ctx) {
   async function stylePage(cat) {
     $('#subpage').innerHTML = '<div class="loading">加载中…</div>';
     try {
-      const data = await getJSON(`/api/style-playlists?cat=${encodeURIComponent(cat)}`);
+      const data = await getJSON(`/api/style-playlists?cat=${encodeURIComponent(cat)}&provider=${provider}`);
       $('#subpage').innerHTML = subhead(cat) + (data.playlists || []).map((p) => `
         <div class="song-row"><div class="body"><div class="name">${esc(p.name)}</div></div>
         <button class="btn" data-playlist="${esc(p.id)}">进去</button></div>`).join('');
@@ -188,7 +215,7 @@ function bind(el, ctx) {
   async function letterList(letter) {
     $('#subpage').innerHTML = '<div class="loading">加载中…</div>';
     try {
-      const data = await getJSON(`/api/artists?type=male&initial=${letter}`);
+      const data = await getJSON(`/api/artists?type=male&initial=${letter}&provider=${provider}`);
       const list = data.artists || [];
       $('#subpage').innerHTML = subhead(`拼音 ${letter}`) + list.map((a) => `
         <div class="song-row"><div class="body"><div class="name">${esc(a.name)}</div></div>
@@ -203,12 +230,16 @@ function bind(el, ctx) {
     try {
       if (page === 'artistCats') { await artistList('male'); return; }
       if (page === 'toplist') {
-        if (arg.id) { await songPage('榜单歌曲', () => getJSON(`/api/toplist?id=${arg.id}`)); return; }
-        const data = await getJSON('/api/toplist');
+        if (arg.id) {
+          const id = arg.id === 'hot' ? HOT_IDS[provider] : arg.id === 'new' ? NEW_IDS[provider] : arg.id;
+          await songPage('榜单歌曲', () => getJSON(`/api/toplist?id=${id}&provider=${provider}`));
+          return;
+        }
+        const data = await getJSON(`/api/toplist?provider=${provider}`);
         const lists = data.lists || [];
         if (arg.lang) {
           langMap = new Map();
-          for (const [label, ...keys] of LANG_KEYS) {
+          for (const [label, ...keys] of LANG_KEYS[provider]) {
             const found = lists.filter((l) => keys.some((k) => l.name.includes(k)));
             if (found.length) langMap.set(label, found);
           }
@@ -220,7 +251,7 @@ function bind(el, ctx) {
         return;
       }
       if (page === 'styles') {
-        const data = await getJSON('/api/catlist');
+        const data = await getJSON(`/api/catlist?provider=${provider}`);
         $('#subpage').innerHTML = subhead('风格') + `<div class="grid">${(data.cats || []).map((c) =>
           `<div class="tile" data-style="${esc(c)}">${esc(c)}</div>`).join('')}</div>`;
         return;
@@ -237,6 +268,8 @@ function bind(el, ctx) {
 
   // ===== 一次性委托（唯一监听挂载点） =====
   el.addEventListener('click', (e) => {
+    const sw = e.target.closest('.prov');
+    if (sw) { switchProvider(sw.dataset.prov); return; }
     const songEl = e.target.closest('[data-song]');
     if (songEl) { request(JSON.parse(songEl.dataset.song)); return; }
     const tile = e.target.closest('.tile[data-page]');
@@ -249,14 +282,14 @@ function bind(el, ctx) {
       return;
     }
     const tl = e.target.closest('[data-toplist]');
-    if (tl) { songPage('榜单歌曲', () => getJSON(`/api/toplist?id=${tl.dataset.toplist}`)); return; }
+    if (tl) { songPage('榜单歌曲', () => getJSON(`/api/toplist?id=${tl.dataset.toplist}&provider=${provider}`)); return; }
     const st = e.target.closest('[data-style]');
     if (st) { stylePage(st.dataset.style); return; }
     const pl = e.target.closest('[data-playlist]');
-    if (pl) { songPage('歌单', () => getJSON(`/api/playlist-songs?id=${pl.dataset.playlist}`)); return; }
+    if (pl) { songPage('歌单', () => getJSON(`/api/playlist-songs?id=${pl.dataset.playlist}&provider=${provider}`)); return; }
     const lt = e.target.closest('[data-letter]');
     if (lt) { letterList(lt.dataset.letter); return; }
     const ar = e.target.closest('[data-artist]');
-    if (ar) { songPage('歌手歌曲', () => getJSON(`/api/artist-songs?id=${ar.dataset.artist}`)); return; }
+    if (ar) { songPage('歌手歌曲', () => getJSON(`/api/artist-songs?id=${ar.dataset.artist}&provider=${provider}`)); return; }
   });
 }

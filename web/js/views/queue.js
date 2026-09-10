@@ -22,7 +22,7 @@ function update(el, ctx) {
     rows.push(`
       <div class="queue-item">
         <span class="tag" style="background:var(--green);color:#000;font-size:10px;padding:2px 6px;border-radius:4px">在播</span>
-        <div class="body"><div class="name">${esc(c.title || c.text)}</div>
+        <div class="body"><div class="name">${provIcon(c.provider)}${esc(c.title || c.text)}</div>
         <div class="meta">${esc(c.artist || '')}</div></div>
       </div>`);
   }
@@ -30,7 +30,7 @@ function update(el, ctx) {
     const s = q.song;
     rows.push(`
       <div class="queue-item">
-        <div class="body"><div class="name">${esc(s.title || s.text)}</div>
+        <div class="body"><div class="name">${provIcon(s.provider)}${esc(s.title || s.text)}</div>
         <div class="meta">${esc(s.artist || '')}${s.album ? ' · ' + esc(s.album) : ''}</div></div>
         <div class="ops">
           <button class="op" data-top="${esc(q.id)}">⏫ 置顶</button>
@@ -43,4 +43,8 @@ function update(el, ctx) {
 
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+// 歌曲来源小图标：🎵 网易云 / 🎶 QQ音乐（老数据无 provider 字段按网易云算）
+function provIcon(provider) {
+  return `<span class="prov-ico">${provider === 'qq' ? '🎶' : '🎵'}</span>`;
 }

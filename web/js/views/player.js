@@ -90,7 +90,8 @@ function update(el, ctx) {
 
   if (cur && (cur.song.title || cur.song.text)) {
     nowEl.classList.remove('empty');
-    title.textContent = (cur.song.title || cur.song.text) + (cur.song.artist ? ' · ' + cur.song.artist : '');
+    const provIco = cur.song.provider === 'qq' ? '🎶' : '🎵';
+    title.textContent = `${provIco} ${cur.song.title || cur.song.text}` + (cur.song.artist ? ' · ' + cur.song.artist : '');
     const parts = [];
     if (cur.song.duration_ms) parts.push(fmtDur(cur.song.duration_ms));
     if (cur.started_at) parts.push('开始于 ' + fmtAgo(cur.started_at, ctx));
@@ -111,7 +112,7 @@ function update(el, ctx) {
   el.querySelector('#volVal').textContent = st.volume;
   const next = st.queue[0];
   nextUp.textContent = next
-    ? `下一首：${next.song.title || next.song.text}${next.song.artist ? ' · ' + next.song.artist : ''}`
+    ? `下一首：${next.song.provider === 'qq' ? '🎶' : '🎵'} ${next.song.title || next.song.text}${next.song.artist ? ' · ' + next.song.artist : ''}`
     : (cur ? '队列已空' : '');
   status.textContent = st.playerOnline ? '' : '⚠ 播放端离线，点歌会排队';
   status.style.color = st.playerOnline ? 'var(--dim)' : 'var(--gold)';
@@ -170,7 +171,7 @@ async function loadLyrics(el, ctx) {
   lyricLines = []; lastActive = -1;
   box.innerHTML = '<div class="empty-tip">歌词加载中…</div>';
   try {
-    const r = await fetch(`/api/lyric?id=${encodeURIComponent(cur.song.song_id)}`);
+    const r = await fetch(`/api/lyric?id=${encodeURIComponent(cur.song.song_id)}&provider=${encodeURIComponent(cur.song.provider || '')}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     lyricLines = parseLrc(data.lrc);
