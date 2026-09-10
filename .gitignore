@@ -6,3 +6,7 @@ player/player_config.json
 .DS_Store
 player/player.log
 player/libmpv/
+player/build/
+player/dist/
+player/*.spec
+server/server_out.log

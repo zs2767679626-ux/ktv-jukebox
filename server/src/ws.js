@@ -55,7 +55,11 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
         clearTimeout(snapTimer);
         webClients.delete(ws);
         role = 'player';
-        if (player) player.close();
+        if (player) {
+          // 通知旧播放端被顶替：它收到后自动退出进程，不再重连回来对轰
+          if (player.readyState === 1) player.send(JSON.stringify({ type: 'player_replaced' }));
+          player.close();
+        }
         player = ws;
         log('player connected');
         jukebox.playerHello();

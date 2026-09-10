@@ -2,6 +2,8 @@
 import asyncio
 import json
 import logging
+import os
+import sys
 
 log = logging.getLogger('player.client')
 
@@ -18,13 +20,18 @@ async def run(cfg):
     player = make_player(cfg)
     try:
         while True:
+            delay = 3
             try:
                 await session(cfg, player)
             except asyncio.CancelledError:
                 raise
+            except SystemExit:
+                raise  # 被新播放端顶替：直接退出进程，不再重连
             except Exception as e:
                 log.warning('会话异常，5 秒后重连：%s', e)
-                await asyncio.sleep(5)
+                delay = 5
+            # 会话结束（含被服务端正常关闭）也稍等再重连，避免与服务端对轰空转
+            await asyncio.sleep(delay)
     finally:
         await player.close()
 
@@ -55,6 +62,10 @@ async def receiver(ws, cmdq):
                 msg = json.loads(raw)
             except Exception:
                 continue
+            if msg.get('type') == 'player_replaced':
+                log.info('被新播放端顶替，本端退出')
+                # 立即退出进程，不等 asyncio 任务栈收尾（避免 SystemExit 走任务栈留噪音日志）
+                os._exit(0)
             if msg.get('type') == 'player_cmd':
                 await cmdq.put(msg.get('cmd') or {})
     finally:
