@@ -115,12 +115,15 @@ test('qrKey/qrCreate：ptqrshow 取图 + qrsig cookie，qrCreate 返回 data URI
   });
 });
 
-test('qrCheck 状态映射：66/67→802，65→800', async () => {
+test('qrCheck 状态映射：66→801 待扫码，67/68→802 已扫待确认，65→800 过期', async () => {
   const q = createQQ();
   await withFetch(async () => mockResponse({ body: "ptuiCB('66','0','','0','二维码未失效','')" }), async () => {
-    assert.deepEqual(await q.qrCheck('K'), { code: 802 });
+    assert.deepEqual(await q.qrCheck('K'), { code: 801 });
   });
   await withFetch(async () => mockResponse({ body: "ptuiCB('67','0','','0','二维码已确认','')" }), async () => {
+    assert.deepEqual(await q.qrCheck('K'), { code: 802 });
+  });
+  await withFetch(async () => mockResponse({ body: "ptuiCB('68','0','','0','登录中','')" }), async () => {
     assert.deepEqual(await q.qrCheck('K'), { code: 802 });
   });
   await withFetch(async () => mockResponse({ body: "ptuiCB('65','0','','0','二维码已失效','')" }), async () => {
@@ -171,8 +174,9 @@ test('loginStatus：登录后返回昵称；凭证无效返回 null', async () =
 
 test('toplists/toplistSongs/playlistSongs 归一化', async () => {
   await withFetch(async (n, url) => {
-    if (url.includes('toplist_opt')) {
-      return mockResponse({ body: JSON.stringify({ code: 0, toplist: [{ topID: 26, ListName: '热歌榜' }] }) });
+    // GetAll 走 musicu 的 GET data= 形式
+    if (url.includes('musicu.fcg')) {
+      return mockResponse({ body: JSON.stringify({ code: 0, req_0: { code: 0, data: { group: [{ groupName: '巅峰榜', toplist: [{ topId: 26, title: '热歌榜' }] }] } } }) });
     }
     if (url.includes('toplist_cp')) {
       return mockResponse({ body: JSON.stringify({ code: 0, songlist: [{ data: { songmid: 'm1', songname: '热歌', singer: [{ name: 'S' }], albumname: 'A', interval: 10 } }] }) });
@@ -192,7 +196,7 @@ test('toplists/toplistSongs/playlistSongs 归一化', async () => {
 test('catlist 缓存分类名→id，stylePlaylists 按名查 id 请求', async () => {
   await withFetch(async (n, url, opts) => {
     if (url.includes('diss_tag_conf')) {
-      return mockResponse({ body: JSON.stringify({ code: 0, data: { categories: [{ items: [{ itemName: '流行', itemId: 31 }] }] } }) });
+      return mockResponse({ body: JSON.stringify({ code: 0, data: { categories: [{ categoryGroupName: '语种', items: [{ categoryName: '流行', categoryId: 31 }] }] } }) });
     }
     if (url.includes('diss_by_tag')) {
       const u = new URL(url);

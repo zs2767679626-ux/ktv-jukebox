@@ -38,6 +38,8 @@ function createQQ({ credential: initialCredential = '' } = {}) {
   let cookie = String(initialCredential || '');
   // 扫码过程中的二维码图缓存：qrsig → PNG Buffer（qrKey 拉图，qrCreate 取图）
   const qrStore = new Map();
+  // vkey 请求的 guid：10 位数字（空 guid 会 guid-error 取不到 purl）
+  const GUID = String(Math.floor(1e9 + Math.random() * 9e9));
 
   // —— 凭证解析：cookie 存的是 QQ 音乐凭证 JSON 字符串 ——
   function cred() {
@@ -124,15 +126,34 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     return item.data ?? {};
   }
 
+  // musicu 的旧版 GET 形式（data=JSON 查询参数，comm {ct:24, cv:0}）：
+  // ToplistInfoServer 系列只认这种形式，POST 新版 comm 会报 500005
+  async function musicuGet(module, method, param) {
+    const payload = { req_0: { module, method, param }, comm: { ct: 24, cv: 0 } };
+    const res = await http(MUSICU_URL, {
+      params: {
+        g_tk: DEFAULT_GTK, loginUin: '0', hostUin: '0', format: 'json',
+        inCharset: 'utf-8', outCharset: 'utf-8', notice: 0, platform: 'yqq.json',
+        needNewCode: 0, data: JSON.stringify(payload),
+      },
+    });
+    const json = JSON.parse(res.text);
+    const item = json?.req_0 ?? {};
+    if ((item.code ?? 0) !== 0) throw new Error(`QQ 接口错误 ${item.code}`);
+    return item.data ?? {};
+  }
+
   // —— 歌曲字段归一化（与 netease 对齐：song_id/title/artist/album/duration_ms/fee）——
+  // 兼容两种结构：搜索/榜单的平铺字段（albumname、pay.payplay），
+  // 歌手歌单的嵌套字段（album.name、pay.pay_play）
   function normalize(s) {
     return {
       song_id: String(s.songmid || s.mid || s.song_id || ''),
       title: s.songname || s.name || s.title || '',
       artist: (s.singer || []).map((a) => a.name).join('/'),
-      album: s.albumname || s.album || '',
+      album: s.albumname || (s.album && s.album.name) || '',
       duration_ms: (s.interval || 0) * 1000,
-      fee: s.pay?.payplay ?? 0,
+      fee: s.pay ? (s.pay.payplay ?? s.pay.pay_play ?? 0) : 0,
     };
   }
 
@@ -161,7 +182,7 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     let sawVip = false;
     for (const q of qualityLadder(c)) {
       const data = await musicu('music.vkey.GetVkey', 'UrlGetVkey', {
-        guid: '',
+        guid: GUID,
         songmid: [id],
         songtype: [0],
         filename: [`${q}${id}${id}${extOf(q)}`],
@@ -209,13 +230,15 @@ function createQQ({ credential: initialCredential = '' } = {}) {
   }
 
   async function toplists() {
-    const res = await http('https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_opt.fcg', {
-      params: { page: 'index', format: 'json', tpl: 13, page_size: 100, inCharset: 'utf-8', outCharset: 'utf-8', platform: 'yqq.json', needNewCode: 0, notice: 0 },
-    });
-    const data = JSON.parse(res.text);
-    return (data?.toplist || [])
-      .filter((t) => t.topID != null)
-      .map((t) => ({ id: String(t.topID), name: t.ListName || t.topname || '' }));
+    // GetAll：group[] → toplist[]（巅峰榜/地区榜/特色榜等分组拍平）
+    const data = await musicuGet('musicToplist.ToplistInfoServer', 'GetAll', {});
+    const out = [];
+    for (const g of data?.group || []) {
+      for (const t of g?.toplist || []) {
+        if (t.topId != null) out.push({ id: String(t.topId), name: t.title || '' });
+      }
+    }
+    return out;
   }
 
   async function toplistSongs(id) {
@@ -237,8 +260,8 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     catMap = {};
     for (const grp of data?.data?.categories || []) {
       for (const item of grp?.items || []) {
-        const name = item.itemName ?? item.name ?? '';
-        const id = item.itemId ?? item.id ?? '';
+        const name = item.categoryName ?? item.itemName ?? item.name ?? '';
+        const id = item.categoryId ?? item.itemId ?? item.id ?? '';
         if (name && id != null) catMap[name] = id;
       }
     }
@@ -249,8 +272,10 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     if (!catMap) await catlist();
     const id = catMap?.[cat];
     if (id == null) return [];
+    // sortId=2（最新）：返回的 dissid 区间可用 qzone 接口取到歌单；
+    // sortId 1/3/4 常返回新版 dissid，qzone 取不到（空歌单）
     const res = await http('https://c.y.qq.com/splcloud/fcgi-bin/fcg_get_diss_by_tag.fcg', {
-      params: { categoryId: id, sortId: 5, sin: 0, ein: limit - 1, format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', platform: 'yqq.json', g_tk: DEFAULT_GTK, hostUin: 0, needNewCode: 0, notice: 0 },
+      params: { categoryId: id, sortId: 2, sin: 0, ein: limit - 1, format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', platform: 'yqq.json', g_tk: DEFAULT_GTK, hostUin: 0, needNewCode: 0, notice: 0 },
     });
     const data = JSON.parse(res.text);
     return (data?.data?.list || []).map((p) => ({
@@ -262,7 +287,8 @@ function createQQ({ credential: initialCredential = '' } = {}) {
 
   async function playlistSongs(id) {
     const res = await http('https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg', {
-      params: { type: 1, json: 1, utf8: 1, onlysong: 0, disstid: id, format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', platform: 'yqq.json', g_tk: DEFAULT_GTK, hostUin: 0, needNewCode: 0, notice: 0 },
+      params: { type: 1, json: 1, utf8: 1, onlysong: 0, disstid: id, loginUin: 0, format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', platform: 'yqq.json', g_tk: DEFAULT_GTK, hostUin: 0, needNewCode: 0, notice: 0 },
+      headers: { Referer: 'https://y.qq.com/n/yqq/playlist' },
     });
     const data = JSON.parse(res.text);
     const cd = data?.cdlist?.[0] || {};
@@ -284,11 +310,11 @@ function createQQ({ credential: initialCredential = '' } = {}) {
   }
 
   async function artistSongs(id) {
-    const res = await http('https://c.y.qq.com/v8/fcg-bin/fcg_v8_singer_track_cp.fcg', {
-      params: { singermid: id, num: 50, order: 'listen', begin: 0, format: 'json', platform: 'yqq.json', g_tk: DEFAULT_GTK, hostUin: 0, needNewCode: 0, notice: 0, inCharset: 'utf-8', outCharset: 'utf-8' },
+    // 歌手页接口已下线，改用音乐馆歌曲列表（songInfo 嵌套结构）
+    const data = await musicu('musichall.song_list_server', 'GetSingerSongList', {
+      begin: 0, num: 50, order: 1, singerMid: id,
     });
-    const data = JSON.parse(res.text);
-    return (data?.data?.list || []).map((it) => normalize(it.musicData || it));
+    return (data?.songList || []).map((it) => normalize(it.songInfo || it));
   }
 
   // —— 登录态：QQ 扫码登录（ptlogin2 三步）+ 状态查询 ——
@@ -337,7 +363,9 @@ function createQQ({ credential: initialCredential = '' } = {}) {
       qrStore.delete(key);
       return { code: 800 };
     }
-    if (code === 66 || code === 67) return { code: 802 };
+    // 66=二维码未失效（等待扫码），67=已扫码待确认，68=已确认登录中
+    if (code === 66) return { code: 801 };
+    if (code === 67 || code === 68) return { code: 802 };
     if (code !== 0) return { code: -1 };
     // 登录成功：args[2] 是带回调的 URL，含 ptsigx 与 uin
     const target = args[2] || '';
