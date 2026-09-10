@@ -445,7 +445,8 @@ function createQQ({ credential: initialCredential = '' } = {}) {
       });
       const data = JSON.parse(res.text);
       if (data?.code !== 0) return null;
-      const u = data?.data?.userinfo?.usermsg || {};
+      // 实测两种响应形状：QQ音乐 App 登录是 userinfo.usermsg，手机 QQ 登录是 creator
+      const u = (data?.data?.userinfo?.usermsg) || (data?.data?.creator) || {};
       const nickname = u.nick || u.nickname || '';
       // 绿钻标识字段以实测为准，这里防御性取 vipIconFlag
       const vipType = u.vipIconFlag ? 1 : 0;

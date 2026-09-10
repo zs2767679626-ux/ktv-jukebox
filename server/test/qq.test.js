@@ -164,6 +164,13 @@ test('loginStatus：登录后返回昵称；凭证无效返回 null', async () =
     const q = createQQ({ credential: JSON.stringify({ musicid: 123, musickey: 'MK' }) });
     assert.deepEqual(await q.loginStatus(), { loggedIn: true, nickname: '绿钻用户', vipType: 1 });
   });
+  // 手机 QQ 扫码登录的另一种响应形状：creator 里带昵称
+  await withFetch(async () => mockResponse({
+    body: JSON.stringify({ code: 0, data: { creator: { nick: 'QQ用户', uin: 123 } } }),
+  }), async () => {
+    const q = createQQ({ credential: JSON.stringify({ musicid: 123, musickey: 'MK' }) });
+    assert.deepEqual(await q.loginStatus(), { loggedIn: true, nickname: 'QQ用户', vipType: 0 });
+  });
   await withFetch(async () => mockResponse({ body: JSON.stringify({ code: 1000 }) }), async () => {
     const q = createQQ({ credential: JSON.stringify({ musicid: 123, musickey: 'MK' }) });
     assert.equal(await q.loginStatus(), null);
