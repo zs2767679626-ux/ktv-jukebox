@@ -75,9 +75,12 @@ function createStore(dbPath) {
     },
     setSetting(key, value) {
       putSetStmt.run(key, value);
+      // 审计日志只记键名和时间，绝不记值（值是登录凭证）
+      console.log(`[settings] set ${key} @${new Date().toISOString()}`);
     },
     deleteSetting(key) {
       delSetStmt.run(key);
+      console.log(`[settings] delete ${key} @${new Date().toISOString()}`);
     },
     close() {
       db.close();
