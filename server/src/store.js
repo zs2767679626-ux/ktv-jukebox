@@ -9,12 +9,18 @@ function createStore(dbPath) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       song_id TEXT, title TEXT, artist TEXT, album TEXT, text TEXT,
       duration_ms INTEGER, fee INTEGER,
+      provider TEXT NOT NULL DEFAULT 'netease',
       status TEXT NOT NULL DEFAULT 'requested',
       reason TEXT,
       requested_at INTEGER NOT NULL,
       started_at INTEGER, finished_at INTEGER
     );
   `);
+  // 老库迁移：补 provider 列（双平台上线前的表没有这一列）
+  const cols = db.prepare(`PRAGMA table_info(history)`).all().map((c) => c.name);
+  if (!cols.includes('provider')) {
+    db.exec(`ALTER TABLE history ADD COLUMN provider TEXT NOT NULL DEFAULT 'netease'`);
+  }
   // 简单键值表：网易云登录 Cookie 等运行配置（重启保留）
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -23,8 +29,8 @@ function createStore(dbPath) {
     );
   `);
   const addStmt = db.prepare(`
-    INSERT INTO history (song_id,title,artist,album,text,duration_ms,fee,status,requested_at)
-    VALUES (@song_id,@title,@artist,@album,@text,@duration_ms,@fee,'requested',@requested_at)`);
+    INSERT INTO history (song_id,title,artist,album,text,duration_ms,fee,provider,status,requested_at)
+    VALUES (@song_id,@title,@artist,@album,@text,@duration_ms,@fee,@provider,'requested',@requested_at)`);
   const updateStmt = db.prepare(`
     UPDATE history SET status=@status, reason=@reason, started_at=@started_at, finished_at=@finished_at
     WHERE id=@id`);
@@ -44,6 +50,7 @@ function createStore(dbPath) {
         text: song.text ?? null,
         duration_ms: song.duration_ms ?? null,
         fee: song.fee ?? null,
+        provider: song.provider ?? 'netease',
         requested_at: Date.now(),
       });
       return Number(info.lastInsertRowid);

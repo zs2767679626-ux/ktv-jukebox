@@ -7,16 +7,16 @@ const { createApi } = require('../src/api');
 
 const fakeStore = { getSetting: () => null, setSetting() {}, deleteSetting() {} };
 
-async function withServer(handler, extra = {}) {
-  const fake = {
-    search: async (q) => [{ id: '1', title: q, artist: 'X', album: '', duration_ms: 1, fee: 0 }],
+function makeFake() {
+  return {
+    search: async (q) => [{ song_id: '1', title: q, artist: 'X', album: '', duration_ms: 1, fee: 0 }],
     artists: async () => [{ id: '7', name: '歌手', pic: 'p' }],
-    artistSongs: async () => [{ id: '2', title: '歌', artist: 'X', album: '', duration_ms: 1, fee: 0 }],
+    artistSongs: async () => [{ song_id: '2', title: '歌', artist: 'X', album: '', duration_ms: 1, fee: 0 }],
     toplists: async () => [{ id: '3778678', name: '热歌榜' }],
-    toplistSongs: async () => [{ id: '3', title: '热歌', artist: 'X', album: '', duration_ms: 1, fee: 0 }],
+    toplistSongs: async () => [{ song_id: '3', title: '热歌', artist: 'X', album: '', duration_ms: 1, fee: 0 }],
     catlist: async () => ['流行'],
     stylePlaylists: async () => [{ id: '9', name: '精选', cover: 'c' }],
-    playlistSongs: async () => [{ id: '4', title: '歌单歌', artist: 'X', album: '', duration_ms: 1, fee: 0 }],
+    playlistSongs: async () => [{ song_id: '4', title: '歌单歌', artist: 'X', album: '', duration_ms: 1, fee: 0 }],
     lyric: async () => '[00:00.00]词',
     loginStatus: async () => null,
     qrKey: async () => null,
@@ -25,10 +25,17 @@ async function withServer(handler, extra = {}) {
     setCookie() {},
     clearCookie() {},
   };
-  Object.assign(fake, extra.netease);
+}
+
+async function withServer(handler, extra = {}) {
+  const netease = makeFake();
+  const qq = makeFake();
+  Object.assign(netease, extra.netease);
+  Object.assign(qq, extra.qq);
+  const providers = { netease, qq, get: (p) => (p === 'qq' ? qq : netease) };
   const app = express();
   app.use(express.json());
-  app.use('/api', createApi({ netease: fake, store: extra.store || fakeStore, lanUrls: extra.lanUrls || [] }));
+  app.use('/api', createApi({ providers, store: extra.store || fakeStore, lanUrls: extra.lanUrls || [] }));
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   const port = server.address().port;
@@ -47,12 +54,12 @@ const req = (port, method, p, body) => new Promise((resolve, reject) => {
   r.end(data);
 });
 
-test('health 与 search', async () => {
+test('health 与 search（默认 netease，结果盖 provider 章）', async () => {
   await withServer(async (port) => {
     assert.deepEqual(await req(port, 'GET', '/api/health'), { status: 200, json: { ok: true } });
     const s = await req(port, 'POST', '/api/search', { q: '晴天' });
     assert.equal(s.json.results[0].title, '晴天');
-    assert.equal(s.json.results[0].fee, 0);
+    assert.equal(s.json.results[0].provider, 'netease');
   });
 });
 
@@ -67,6 +74,28 @@ test('search 空关键词返回空数组', async () => {
   await withServer(async (port) => {
     const s = await req(port, 'POST', '/api/search', { q: '  ' });
     assert.deepEqual(s.json.results, []);
+  });
+});
+
+test('provider=qq 时 search/lyric 走 QQ 适配器并盖章 provider:qq', async () => {
+  await withServer(async (port) => {
+    const s = await req(port, 'POST', '/api/search', { q: '七里香', provider: 'qq' });
+    assert.equal(s.json.results[0].title, '七里香');
+    assert.equal(s.json.results[0].provider, 'qq');
+    const l = await req(port, 'GET', '/api/lyric?id=1&provider=qq');
+    assert.equal(l.json.lrc, '[00:00.00]词');
+  }, {
+    qq: {
+      search: async (q) => [{ song_id: 'qq1', title: q, artist: 'X', album: '', duration_ms: 1, fee: 0 }],
+      lyric: async () => '[00:00.00]词',
+    },
+  });
+});
+
+test('非法 provider 回落 netease', async () => {
+  await withServer(async (port) => {
+    const s = await req(port, 'POST', '/api/search', { q: 'x', provider: 'kuwo' });
+    assert.equal(s.json.results[0].provider, 'netease');
   });
 });
 
@@ -86,9 +115,12 @@ test('artists/artist-songs/toplist/catlist/style-playlists/playlist-songs/lyric 
 });
 
 test('netease 抛错 → 500 {error}', async () => {
+  const netease = makeFake();
+  netease.search = async () => { throw new Error('boom'); };
+  const qq = makeFake();
   const app = express();
   app.use(express.json());
-  app.use('/api', createApi({ netease: { search: async () => { throw new Error('boom'); } } }));
+  app.use('/api', createApi({ providers: { netease, qq, get: (p) => (p === 'qq' ? qq : netease) }, store: fakeStore }));
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   const port = server.address().port;
@@ -99,7 +131,7 @@ test('netease 抛错 → 500 {error}', async () => {
   } finally { server.close(); }
 });
 
-test('网易云扫码登录：qr-login/qr-check 803 保存 cookie，logout 清除', async () => {
+test('网易云扫码登录：qr-login/qr-check 803 保存 cookie，logout 清除（旧路由兼容）', async () => {
   const settings = {};
   const holder = { cookie: '' };
   await withServer(async (port) => {
@@ -132,6 +164,46 @@ test('网易云扫码登录：qr-login/qr-check 803 保存 cookie，logout 清�
       qrCreate: async () => 'QRIMG',
       qrCheck: async (key) => (key === 'KEY1' ? { code: holder.scanned ? 803 : 801, cookie: 'MUSIC_U=qq' } : { code: 800 }),
       loginStatus: async () => (holder.cookie ? { loggedIn: true, nickname: '会员号', vipType: 11 } : null),
+      setCookie: (c) => { holder.cookie = c; },
+      clearCookie: () => { holder.cookie = ''; },
+    },
+    store: {
+      getSetting: (k) => settings[k] ?? null,
+      setSetting: (k, v) => { settings[k] = v; },
+      deleteSetting: (k) => { delete settings[k]; },
+    },
+  });
+});
+
+test('QQ 音乐扫码登录（统一 auth 路由）：803 存 qq_cookie，logout 清除', async () => {
+  const settings = {};
+  const holder = { cookie: '' };
+  await withServer(async (port) => {
+    // 初始未登录
+    assert.deepEqual(await req(port, 'GET', '/api/auth/login-status?provider=qq'), { status: 200, json: { provider: 'qq', status: null } });
+    // 生成二维码
+    const qr = await req(port, 'POST', '/api/auth/qr-login', { provider: 'qq' });
+    assert.deepEqual(qr.json, { provider: 'qq', qrKey: 'QQKEY', qrImg: 'QQIMG' });
+    // 已扫码待确认 → 802
+    const wait = await req(port, 'POST', '/api/auth/qr-check', { provider: 'qq', qrKey: 'QQKEY' });
+    assert.equal(wait.json.code, 802);
+    // 扫码成功 → 803 + 登录态 + 凭证持久化
+    holder.scanned = true;
+    const ok = await req(port, 'POST', '/api/auth/qr-check', { provider: 'qq', qrKey: 'QQKEY' });
+    assert.equal(ok.json.code, 803);
+    assert.equal(ok.json.provider, 'qq');
+    assert.equal(ok.json.loggedIn, true);
+    assert.equal(ok.json.nickname, '绿钻号');
+    assert.equal(settings.qq_cookie, '{"musicid":1,"musickey":"K"}');
+    // 登出
+    assert.deepEqual(await req(port, 'POST', '/api/auth/logout', { provider: 'qq' }), { status: 200, json: { ok: true } });
+    assert.equal('qq_cookie' in settings, false);
+  }, {
+    qq: {
+      qrKey: async () => 'QQKEY',
+      qrCreate: async () => 'QQIMG',
+      qrCheck: async (key) => (key === 'QQKEY' ? { code: holder.scanned ? 803 : 802, cookie: '{"musicid":1,"musickey":"K"}' } : { code: 800 }),
+      loginStatus: async () => (holder.cookie ? { loggedIn: true, nickname: '绿钻号', vipType: 1 } : null),
       setCookie: (c) => { holder.cookie = c; },
       clearCookie: () => { holder.cookie = ''; },
     },

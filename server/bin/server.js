@@ -3,7 +3,7 @@ const os = require('os');
 const path = require('path');
 const config = require('../src/config');
 const { createStore } = require('../src/store');
-const { createNetease } = require('../src/netease');
+const { createProviders } = require('../src/providers');
 const { createApp } = require('../src/index');
 const neteaseApi = require('NeteaseCloudMusicApi');
 
@@ -12,8 +12,12 @@ require('fs').mkdirSync(path.dirname(config.dbPath), { recursive: true });
 
 const store = createStore(config.dbPath);
 // 登录态优先取本地持久化的（扫码登录保存的），其次环境变量 NETEASE_COOKIE
-const initialCookie = store.getSetting('netease_cookie') || config.neteaseCookie;
-const netease = createNetease(neteaseApi, { realIP: config.neteaseRealIP, cookie: initialCookie });
+const providers = createProviders({
+  neteaseApi,
+  realIP: config.neteaseRealIP,
+  initialNeteaseCookie: store.getSetting('netease_cookie') || config.neteaseCookie,
+  initialQQCredential: store.getSetting('qq_cookie') || '',
+});
 // 局域网访问地址（网页端「扫码点歌」二维码内容）
 const lanUrls = [];
 for (const addrs of Object.values(os.networkInterfaces())) {
@@ -22,7 +26,7 @@ for (const addrs of Object.values(os.networkInterfaces())) {
   }
 }
 const { server } = createApp({
-  netease,
+  providers,
   history: store,
   isPlayerToken: (t) => Boolean(t) && t === config.deviceToken,
   webDir: path.join(__dirname, '..', '..', 'web'),
@@ -33,8 +37,12 @@ server.listen(config.port, () => {
   console.log(`jukebox server listening on :${config.port}`);
   // 打印局域网访问地址，方便员工手机打开
   for (const url of lanUrls) console.log(`  ${url}`);
-  netease.loginStatus().then((s) => {
+  providers.netease.loginStatus().then((s) => {
     console.log(s ? `网易云已登录：${s.nickname}（vipType ${s.vipType}），会员歌可正常播放`
       : '网易云未登录：会员歌将自动跳过，可在网页点「网易云登录」扫码登录');
+  });
+  providers.qq.loginStatus().then((s) => {
+    console.log(s ? `QQ音乐已登录：${s.nickname}（vipType ${s.vipType}），VIP 歌可正常播放`
+      : 'QQ音乐未登录：VIP 歌将自动跳过，可在网页点「QQ音乐登录」扫码登录');
   });
 });

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { createNetease } = require('../src/netease');
+const { createNetease } = require('../src/providers/netease');
 
 function fakeApi(overrides = {}) {
   return {
