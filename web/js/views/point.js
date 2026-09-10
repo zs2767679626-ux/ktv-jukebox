@@ -35,7 +35,7 @@ export function render(el, ctx) {
       <div class="grid" id="tiles">${tilesHtml()}</div>
     </div>
     <div class="card" id="subpage" style="display:none"></div>
-    <p class="point-sign">追寻AI作品<br />vx:BMWx5MMMM</p>`;
+    <p class="point-sign">追寻AI作品<br />联系我微信：BMWx5MMMM</p>`;
   bind(el, ctx);
 }
 

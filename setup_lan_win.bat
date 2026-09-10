@@ -68,7 +68,7 @@ REM ---- 7. 打印局域网地址 ----
 echo.
 echo 员工手机访问地址（办公室 Wi-Fi 下）：
 for /f "delims=" %%i in ('powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 ^| Where-Object {$_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*'} ^| Select-Object -ExpandProperty IPAddress) -join '  '"') do echo   http://%%i:3000
-echo 手机上打开后：顶栏点「🎵 网易云」→ 用网易云 App 扫码登录 → 会员歌即可正常播放
+echo 手机上打开后：顶栏点「🎵 网易云」或「🎶 QQ音乐」扫码登录 → VIP 歌即可正常播放
 echo.
 
 REM ---- 8. 播放端 ----
