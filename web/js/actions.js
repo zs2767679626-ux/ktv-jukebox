@@ -6,6 +6,7 @@ export function bindActions(ws) {
     togglePause() { ws.send({ type: store_paused() }); },
     setVolume(value) { ws.send({ type: 'volume_set', value }); },
     toggleMute() { ws.send({ type: 'mute_toggle' }); },
+    setMode(mode) { ws.send({ type: 'mode_set', value: mode }); },
     top(id) { ws.send({ type: 'queue_top', id }); },
     remove(id) { ws.send({ type: 'queue_remove', id }); },
   };

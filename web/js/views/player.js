@@ -25,6 +25,7 @@ export function render(el, ctx) {
       <div class="controls">
         <button class="btn primary" id="pauseBtn" disabled>⏸ 暂停</button>
         <button class="btn" id="skipBtn" disabled>⏭ 切歌</button>
+        <button class="btn" id="modeBtn" title="切换播放模式">🔁 顺序</button>
         <button class="btn" id="muteBtn">🔊</button>
         <div class="vol-row">
           <span style="font-size:13px;color:var(--dim)">音量</span>
@@ -52,6 +53,13 @@ function bind(el, ctx) {
   el.querySelector('#pauseBtn').addEventListener('click', () => ctx.actions.togglePause());
   el.querySelector('#skipBtn').addEventListener('click', () => {
     if (ctx.state && ctx.state.current) ctx.actions.skip();
+  });
+  const modeBtn = el.querySelector('#modeBtn');
+  modeBtn.addEventListener('click', () => {
+    const order = ['order', 'single', 'list'];
+    const cur = (ctx.state && ctx.state.mode) || 'order';
+    const next = order[(order.indexOf(cur) + 1) % order.length];
+    ctx.actions.setMode(next);
   });
   el.querySelector('#muteBtn').addEventListener('click', () => ctx.actions.toggleMute());
   const slider = el.querySelector('#volSlider');
@@ -87,6 +95,10 @@ function update(el, ctx) {
   const skipBtn = el.querySelector('#skipBtn');
   const pauseBtn = el.querySelector('#pauseBtn');
   const status = el.querySelector('#playerStatus');
+
+  const modeBtn = el.querySelector('#modeBtn');
+  const modeLabels = { order: '🔁 顺序', single: '🔂 单曲循环', list: '🔁 列表循环' };
+  modeBtn.textContent = modeLabels[st.mode] || modeLabels.order;
 
   if (cur && (cur.song.title || cur.song.text)) {
     nowEl.classList.remove('empty');
