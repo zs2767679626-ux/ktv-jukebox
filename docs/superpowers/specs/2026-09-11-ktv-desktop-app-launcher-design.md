@@ -31,7 +31,7 @@ Edge App 模式（Win11 自带 Edge，已核实存在）+ VBS 一键启动器。
 
 全部为新增文件，位置 `jukebox/tools/`：
 
-1. **`点歌台.vbs`（纯 ASCII，无中文注释）** — 一键启动器，行为见下。
+1. **`点歌台.vbs`** — 一键启动器，行为见下。含中文字符串与中文路径，文件保存为 **UTF-16 LE 带 BOM**，注释用英文（wscript 按 ANSI 解析无 BOM 的 vbs，UTF-8 中文会乱码/吞行）。
 2. **`点歌台.ico`** — 深色底音符图标，用 PowerShell GDI+ 现场生成。
 3. **桌面快捷方式 `点歌台.lnk`** — 目标 wscript.exe + 点歌台.vbs，图标用点歌台.ico。
 
