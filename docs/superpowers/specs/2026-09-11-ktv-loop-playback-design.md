@@ -45,7 +45,7 @@
   - `playerEvent('finished')`：mode=single 时走「记 played → 重播」，否则现路径。
   - `playNext()`：按规则 2 回填。回填经注入的 `history.listPlayed(limit)` 取数（deps 新增）。
   - `getState()` 输出含 mode。
-- `server/src/store.js`：history 新增 `listPlayed(limit)`（`SELECT * FROM history WHERE status='played' ORDER BY id ASC LIMIT ?`，行字段映射回 song 对象在 queue.js 内做）。
+- `server/src/store.js`：history 新增 `listPlayed(limit)`（`SELECT * FROM (SELECT * FROM history WHERE status='played' ORDER BY id DESC LIMIT ?) ORDER BY id ASC`——最近 N 条升序返回，行字段映射回 song 对象在 queue.js 内做）。
 - `server/src/ws.js`：新增 `mode_set` 消息 → `jukebox.setMode(msg.value)`。
 - `server/src/index.js`：启动时 `settings.getSetting('play_mode')` 注入 createJukebox 初始 mode（合法值才用）；挂接 `history.listPlayed` 到 deps。
 - 测试（server/test）：新增 ~7 用例：单曲重播（含新 history 行、再次 send play）、切歌跳出单曲、单曲下解析失败不循环、列表回填（队列空触发、升序、100 条上限）、列表回填仅在 mode=list、mode_set 变更+广播、非法 mode 忽略。
