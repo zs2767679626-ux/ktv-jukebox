@@ -65,3 +65,18 @@ test('list(limit) 截断条数', () => {
   assert.equal(store.list(3).length, 3);
   store.close();
 });
+
+test('listPlayed 只回 played、按 id 升序、受 limit 限制', () => {
+  const store = createStore(tempDb());
+  const a = store.add({ text: 'A' });
+  const b = store.add({ text: 'B' });
+  const c = store.add({ text: 'C' });
+  store.update(a, { status: 'played' });
+  store.update(c, { status: 'played' });
+  store.update(b, { status: 'skipped' }); // 非 played 不回
+  const rows = store.listPlayed();
+  assert.deepEqual(rows.map((r) => r.text), ['A', 'C']); // 升序：先播的在前
+  assert.equal(store.listPlayed(1).length, 1); // limit 生效
+  assert.equal(store.listPlayed(1)[0].text, 'A');
+  store.close();
+});
