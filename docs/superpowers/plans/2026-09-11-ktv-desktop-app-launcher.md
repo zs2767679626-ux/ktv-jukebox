@@ -145,15 +145,23 @@ sh.Run """C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"" --app=h
 Function ServerUp()
   ServerUp = False
   On Error Resume Next
-  Dim http
+  Err.Clear
+  Dim http, st
   Set http = CreateObject("MSXML2.ServerXMLHTTP")
   http.Open "GET", "http://127.0.0.1:3000", False
   http.setTimeouts 3000, 3000, 3000, 3000
   http.Send
-  If Err.Number = 0 And http.Status = 200 Then ServerUp = True
+  If Err.Number = 0 Then
+    st = http.Status
+    If Err.Number = 0 Then
+      If st = 200 Then ServerUp = True
+    End If
+  End If
   On Error GoTo 0
 End Function
 ```
+
+> **执行中发现并修复的坑（2026-09-11）**：原计划写 `If Err.Number = 0 And http.Status = 200 Then`——Send 失败后访问 http.Status 会抛 E_PENDING（0x8000000A），VBScript 的 And 不短路且错误插入表达式求值，导致该条件对死端口**求值为 TRUE**（探针实测），启动器误判服务器在线而跳过拉起。修复：Err.Clear + 每步 Err.Number=0 守卫 + Status 先读入中间变量。已用探针对死端口（FALSE）与在线端口（TRUE）双向验证，并重跑自愈场景通过。
 
 - [ ] **Step 2: 转存 UTF-16 LE 并重命名（复用 Task 1 的 ps1）**
 
