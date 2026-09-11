@@ -36,7 +36,7 @@ function createStore(dbPath) {
     WHERE id=@id`);
   const getStmt = db.prepare(`SELECT * FROM history WHERE id=?`);
   const listStmt = db.prepare(`SELECT * FROM history ORDER BY id DESC LIMIT ?`);
-  const listPlayedStmt = db.prepare(`SELECT * FROM history WHERE status='played' ORDER BY id ASC LIMIT ?`);
+  const listPlayedStmt = db.prepare(`SELECT * FROM (SELECT * FROM history WHERE status='played' ORDER BY id DESC LIMIT ?) ORDER BY id ASC`);
   const getSetStmt = db.prepare(`SELECT value FROM settings WHERE key=?`);
   const putSetStmt = db.prepare(`INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
   const delSetStmt = db.prepare(`DELETE FROM settings WHERE key=?`);

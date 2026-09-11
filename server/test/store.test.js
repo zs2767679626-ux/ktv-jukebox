@@ -77,6 +77,18 @@ test('listPlayed 只回 played、按 id 升序、受 limit 限制', () => {
   const rows = store.listPlayed();
   assert.deepEqual(rows.map((r) => r.text), ['A', 'C']); // 升序：先播的在前
   assert.equal(store.listPlayed(1).length, 1); // limit 生效
-  assert.equal(store.listPlayed(1)[0].text, 'A');
+  assert.equal(store.listPlayed(1)[0].text, 'C'); // limit 截最近播过（窗口语义）
+  store.close();
+});
+
+test('listPlayed 回放最近 100 条：窗口外的更早记录被排除，窗口内仍按 id 升序', () => {
+  const store = createStore(tempDb());
+  const ids = [];
+  for (let i = 0; i < 105; i++) ids.push(store.add({ text: 'S' + i }));
+  ids.forEach((id) => store.update(id, { status: 'played' }));
+  const rows = store.listPlayed();
+  assert.equal(rows.length, 100); // 最近 100 条
+  assert.equal(rows[0].text, 'S5'); // 窗口内最早播过优先
+  assert.equal(rows.at(-1).text, 'S104'); // 最近播过的在最后
   store.close();
 });

@@ -163,7 +163,8 @@ function createJukebox(deps) {
     send({ action: 'volume', value: state.volume });
     send({ action: 'mute', value: state.muted });
     if (!state.current) {
-      // 空队列不立即回填已播历史（列表回填只在播完触发）：否则播放端一连上就自动开播一串老歌
+      // 播放端刚连上时空队列不立即回填（否则开机/重连就自动开播一串老歌）；
+      // 回填由 playNext 在正常推进时触发（播完/切歌），失败路径传 allowRefill=false 不回填
       if (state.queue.length || state.mode !== 'list') { playNext(); return; }
       broadcast();
       return;

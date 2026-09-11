@@ -31,7 +31,7 @@
 补充规则：
 
 1. 单曲循环的实现：`finished` 时若 mode=single，先把当前歌正常记入 history（status=played），再以「重新点歌」路径加回（新 history 行、重新解析 URL）。若重播解析失败 → 走跳过分支，不会死循环。
-2. 列表循环回填时机：`playNext()` 中「无 current、队列空、playerOnline、mode=list」时触发；回填来源为 history 中 status='played' 的记录按 id 升序（最早播过优先），限最近 100 条；回填的每首走正常点歌路径（新 history 行）。回填后立即续播。
+2. 列表循环回填时机：`playNext()` 中「无 current、队列空、playerOnline、mode=list」时触发；回填来源为 history 中 status='played' 的**最近 100 条**记录，按 id 升序返回（窗口内最早播过优先）；回填的每首走正常点歌路径（新 history 行）。回填后立即续播。
 3. 回填时若有人在点歌（队列非空）不触发——排队歌先播。
 4. 切歌在单曲循环下跳出循环：skip 走现有「stop → finishCurrent(skipped) → playNext」路径，天然不重播。
 
