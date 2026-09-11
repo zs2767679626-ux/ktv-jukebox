@@ -11,6 +11,9 @@ function fakeHistory() {
     records,
     add(song) { const id = records.length + 1; records.push({ id, song, status: 'requested', updates: [] }); return id; },
     update(id, f) { const r = records.find((x) => x.id === id); if (r) { r.status = f.status ?? r.status; r.updates.push(f); } },
+    listPlayed: () => [],
+    getSetting: () => null,
+    setSetting: () => {},
   };
 }
 
@@ -58,7 +61,13 @@ async function withRealtime(handler, opts = {}) {
     w.on('message', h);
   });
   try { await handler({ rt, ws, nextMsg, nextState, nextToast, history, port }); }
-  finally { rt.wss.close(); server.close(); } // 关 wss 清心跳定时器，否则裸 node --test 绿期不退出
+  finally {
+    rt.wss.close();
+    // 外挂 http server 模式下 wss.close 只摘监听、不关闭存量客户端；测试失败路径没走到 web.close()
+    // 时会留一条活连接，node 进程事件循环不空、裸 node --test 不退出。显式 terminate 掉兜底。
+    for (const c of rt.wss.clients) c.terminate();
+    server.close();
+  }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -222,6 +231,21 @@ test('网页端连接即收到初始 state 快照', async () => {
     assert.equal(snap.state.volume, 60);
     assert.equal(snap.state.current, null);
     assert.equal(snap.state.queue.length, 0);
+    web.close();
+  });
+});
+
+test('mode_set 切换播放模式并广播，非法值忽略', async () => {
+  await withRealtime(async ({ ws, nextMsg, nextState }) => {
+    const web = await ws();
+    await nextMsg(web); // 排掉连接快照
+    web.send(JSON.stringify({ type: 'mode_set', value: 'list' }));
+    const m = await nextState(web, (s) => s.mode === 'list');
+    assert.equal(m.state.mode, 'list');
+    web.send(JSON.stringify({ type: 'mode_set', value: 'bogus' }));
+    web.send(JSON.stringify({ type: 'volume_set', value: 33 })); // 借一次广播确认 mode 未被污染
+    const m2 = await nextState(web, (s) => s.volume === 33);
+    assert.equal(m2.state.mode, 'list');
     web.close();
   });
 });

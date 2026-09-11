@@ -25,6 +25,7 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
   const jukebox = createJukebox({
     resolveUrl,
     history,
+    initialMode: history.getSetting('play_mode'),
     sendToPlayer,
     broadcast: sendState,
     toast: sendToast,
@@ -78,6 +79,7 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
         case 'resume': jukebox.resume(); break;
         case 'volume_set': jukebox.setVolume(msg.value); break;
         case 'mute_toggle': jukebox.toggleMute(); break;
+        case 'mode_set': jukebox.setMode(msg.value); break;
       }
     });
 
