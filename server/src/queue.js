@@ -6,12 +6,14 @@
 //   queue    — 排队条目 [{id, song, historyId}]
 //   volume   — 0..100（mpv 音量）
 //   paused / muted / playerOnline — 布尔
+//   mode     — 播放模式：order 顺序（队列空即停）/ single 单曲循环 / list 列表循环（自动回填已播）
 function createJukebox(deps) {
   const {
     resolveUrl,   // async (song) => {url} | {error:'vip'|'unavailable'}
     sendToPlayer, // (cmd) => void
     broadcast,    // () => void
-    history,      // { add(song) => id, update(id, fields) }
+    history,      // { add(song) => id, update(id, fields), listPlayed(limit), setSetting(k, v) }
+    initialMode = 'order', // 初始播放模式；非法值回落 order
     now = () => Date.now(),
     toast = () => {},   // (msg) => void：自动跳过时向网页端提示；默认 no-op 兼容既有测试
   } = deps;
@@ -23,6 +25,7 @@ function createJukebox(deps) {
     paused: false,
     muted: false,
     playerOnline: false,
+    mode: ['order', 'single', 'list'].includes(initialMode) ? initialMode : 'order',
   };
 
   let seq = 0;
@@ -40,6 +43,7 @@ function createJukebox(deps) {
       paused: state.paused,
       muted: state.muted,
       playerOnline: state.playerOnline,
+      mode: state.mode,
     };
   }
 
@@ -99,14 +103,32 @@ function createJukebox(deps) {
   }
 
   function playNext() {
-    if (!state.current && state.queue.length && state.playerOnline) {
-      playItem(state.queue.shift());
-    } else {
-      broadcast();
+    if (!state.current && state.playerOnline) {
+      if (!state.queue.length && state.mode === 'list') refillQueue();
+      if (state.queue.length) { playItem(state.queue.shift()); return; }
+    }
+    broadcast();
+  }
+
+  // 列表循环：队列空时把已播过的歌按最早播放顺序接回来（每首新 history 行）
+  function refillQueue() {
+    for (const row of history.listPlayed(100)) {
+      const s = {
+        song_id: row.song_id, title: row.title, artist: row.artist, album: row.album,
+        text: row.text, duration_ms: row.duration_ms, fee: row.fee, provider: row.provider,
+      };
+      state.queue.push({ id: nextId(), song: s, historyId: history.add(s) });
     }
   }
 
   // ===== 全员指令 =====
+  function setMode(m) {
+    if (!['order', 'single', 'list'].includes(m) || state.mode === m) return;
+    state.mode = m;
+    history.setSetting('play_mode', m);
+    broadcast();
+  }
+
   function skip() {
     if (state.current) {
       send({ action: 'stop' });
@@ -140,7 +162,12 @@ function createJukebox(deps) {
     state.playerOnline = true;
     send({ action: 'volume', value: state.volume });
     send({ action: 'mute', value: state.muted });
-    if (!state.current) { playNext(); return; }
+    if (!state.current) {
+      // 空队列不立即回填已播历史（列表回填只在播完触发）：否则播放端一连上就自动开播一串老歌
+      if (state.queue.length || state.mode !== 'list') { playNext(); return; }
+      broadcast();
+      return;
+    }
     if (state.current.url) {                       // URL 已解析：重发给新播放端
       state.current.started_at = now();            // 进度/歌词从新起点算
       history.update(state.current.historyId, { started_at: state.current.started_at });
@@ -161,6 +188,12 @@ function createJukebox(deps) {
 
   function playerEvent(event, detail = {}) {
     if (event === 'finished') {
+      if (state.mode === 'single' && state.current) {
+        const song = state.current.song;
+        finishCurrent('played', null);
+        addToQueue(song); // 在线即重播；解析失败走跳过分支，不会死循环
+        return;
+      }
       finishCurrent('played', null);
       playNext();
     } else if (event === 'error') {
@@ -174,7 +207,7 @@ function createJukebox(deps) {
 
   return {
     getState, addToQueue, topQueue, removeQueue,
-    skip, pause, resume, setVolume, toggleMute,
+    setMode, skip, pause, resume, setVolume, toggleMute,
     playerHello, playerGone, playerEvent, playNext,
   };
 }

@@ -6,6 +6,7 @@ const { createJukebox } = require('../src/queue');
 // 构造一个带记录能力的假历史 + 事件收集器
 function setup(overrides = {}) {
   const events = []; // ['player', cmd] | ['state', state] | ['toast', msg]
+  const settings = {};
   const history = {
     records: [],
     add(song) {
@@ -17,6 +18,8 @@ function setup(overrides = {}) {
       const r = this.records.find((x) => x.id === id);
       if (r) { r.status = fields.status ?? r.status; r.updates.push(fields); }
     },
+    listPlayed: overrides.listPlayed || (() => []),
+    setSetting: (k, v) => { settings[k] = v; },
   };
   const j = createJukebox({
     resolveUrl: overrides.resolveUrl || (async () => ({ url: 'http://example.com/a.mp3' })),
@@ -25,11 +28,13 @@ function setup(overrides = {}) {
     toast: (msg) => events.push(['toast', msg]),
     history,
     now: () => 1700000000000,
+    initialMode: overrides.initialMode,
   });
-  return { j, events, history };
+  return { j, events, history, settings };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const song = (title) => ({ text: title, song_id: '1', title, artist: 'X', duration_ms: 60000, fee: 0 });
+const row = (title) => ({ id: 1, song_id: 's' + title, title, artist: 'X', album: null, text: title, duration_ms: 60000, fee: 0, provider: 'netease', status: 'played' });
 
 test('播放端在线且空闲时，点歌立即播放', async () => {
   const { j, events } = setup();
@@ -287,4 +292,88 @@ test('播放端替换后重发当前歌 play', async () => {
   j.playerHello();
   const cmds2 = events.filter((e) => e[0] === 'player');
   assert.deepEqual(cmds2.map((c) => c[1].action), ['volume', 'mute', 'play', 'pause']);
+});
+
+test('单曲循环：finished 重播同一首，切歌可跳出', async () => {
+  const { j, events, history } = setup({ initialMode: 'single' });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush();
+  j.playerEvent('finished');
+  await flush();
+  assert.equal(j.getState().current.song.title, 'A');
+  assert.equal(events.filter((e) => e[0] === 'player' && e[1].action === 'play').length, 2);
+  assert.equal(history.records.length, 2);
+  assert.equal(history.records[0].status, 'played');
+  j.addToQueue(song('B'));
+  await flush();
+  j.skip();
+  await flush();
+  assert.equal(j.getState().current.song.title, 'B'); // 切歌跳出循环
+});
+
+test('单曲循环：重播解析失败自动跳过，不死循环', async () => {
+  let calls = 0;
+  const { j, events, history } = setup({
+    initialMode: 'single',
+    resolveUrl: async () => (++calls > 1 ? { error: 'unavailable' } : { url: 'http://example.com/a.mp3' }),
+  });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush();
+  j.playerEvent('finished');
+  await flush();
+  assert.equal(j.getState().current, null); // 解析失败跳过，没有第三次 play
+  assert.equal(events.filter((e) => e[0] === 'player' && e[1].action === 'play').length, 1);
+  assert.equal(history.records.at(-1).status, 'skipped');
+});
+
+test('列表循环：队列放空后自动回填已播歌曲并续播（最早优先）', async () => {
+  const { j } = setup({ initialMode: 'list', listPlayed: () => [row('老歌1'), row('老歌2')] });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush();
+  j.playerEvent('finished');
+  await flush();
+  assert.equal(j.getState().current.song.title, '老歌1');
+  assert.equal(j.getState().queue.length, 1);
+  assert.equal(j.getState().queue[0].song.title, '老歌2');
+});
+
+test('顺序模式：队列空即停，不回填', async () => {
+  const { j } = setup({ listPlayed: () => [row('老歌1')] });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush();
+  j.playerEvent('finished');
+  await flush();
+  assert.equal(j.getState().current, null);
+});
+
+test('列表循环：队列非空时不触发回填（排队歌先播）', async () => {
+  let listCalls = 0;
+  const { j } = setup({ initialMode: 'list', listPlayed: () => { listCalls++; return [row('老歌1')]; } });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  j.addToQueue(song('B'));
+  await flush();
+  j.playerEvent('finished');
+  await flush();
+  assert.equal(j.getState().current.song.title, 'B');
+  assert.equal(listCalls, 0);
+});
+
+test('setMode 变更广播并持久化，非法值忽略', () => {
+  const { j, events, settings } = setup();
+  j.setMode('list');
+  assert.equal(j.getState().mode, 'list');
+  assert.equal(settings.play_mode, 'list');
+  assert.ok(events.some((e) => e[0] === 'state' && e[1].mode === 'list'));
+  j.setMode('bogus');
+  assert.equal(j.getState().mode, 'list');
+});
+
+test('initialMode 仅接受合法值', () => {
+  assert.equal(setup({ initialMode: 'single' }).j.getState().mode, 'single');
+  assert.equal(setup({ initialMode: 'whatever' }).j.getState().mode, 'order');
 });
