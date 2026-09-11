@@ -377,3 +377,35 @@ test('initialMode 仅接受合法值', () => {
   assert.equal(setup({ initialMode: 'single' }).j.getState().mode, 'single');
   assert.equal(setup({ initialMode: 'whatever' }).j.getState().mode, 'order');
 });
+
+test('列表循环：解析失败跳过不回填历史，安静停下', async () => {
+  let listCalls = 0;
+  const { j, events, history } = setup({
+    initialMode: 'list',
+    listPlayed: () => { listCalls++; return [row('老歌1')]; },
+    resolveUrl: async (song) => (song.title === 'A' ? { error: 'vip' } : { url: 'http://example.com/old.mp3' }),
+  });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush();
+  assert.equal(j.getState().current, null); // 失败就安静停下，不接播老歌
+  assert.equal(listCalls, 0);
+  assert.equal(history.records.at(-1).status, 'skipped');
+  assert.ok(!events.some((e) => e[0] === 'player' && e[1].action === 'play'));
+});
+
+test('列表循环：播放错误跳过不回填历史，安静停下', async () => {
+  let listCalls = 0;
+  const { j, history } = setup({
+    initialMode: 'list',
+    listPlayed: () => { listCalls++; return [row('老歌1')]; },
+  });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush(); // A 正常开播
+  j.playerEvent('error', {});
+  await flush();
+  assert.equal(j.getState().current, null); // 失败就安静停下，不接播老歌
+  assert.equal(listCalls, 0);
+  assert.equal(history.records[0].status, 'skipped');
+});

@@ -87,7 +87,7 @@ function createJukebox(deps) {
     if (resolved.error) {
       finishCurrent('skipped', resolved.error === 'vip' ? '版权受限' : '无法获取播放地址');
       toast(resolved.error === 'vip' ? '版权受限，已自动跳过' : '无法获取播放地址，已自动跳过');
-      playNext();
+      playNext(false); // 失败跳过不接播历史：列表回填只在正常播完/切歌时发生
       return;
     }
     item.url = resolved.url;
@@ -102,9 +102,9 @@ function createJukebox(deps) {
     broadcast();
   }
 
-  function playNext() {
+  function playNext(allowRefill = true) {
     if (!state.current && state.playerOnline) {
-      if (!state.queue.length && state.mode === 'list') refillQueue();
+      if (allowRefill && !state.queue.length && state.mode === 'list') refillQueue();
       if (state.queue.length) { playItem(state.queue.shift()); return; }
     }
     broadcast();
@@ -200,7 +200,8 @@ function createJukebox(deps) {
       finishCurrent('skipped', detail.reason || '播放错误');
       toast((detail.reason || '播放错误') + '，已自动跳过');
       // 音频设备掉线时不自动续播（音箱没了，播下去也是漏音），恢复后由播放端重连或手动点歌触发
-      if (detail.reason !== '音频设备掉线') playNext();
+      // 失败路径同样不接播历史：回填只在正常播完/切歌时发生
+      if (detail.reason !== '音频设备掉线') playNext(false);
     }
     // 'started' 由播放端在上报时自带，服务端无需处理
   }
