@@ -2,14 +2,13 @@
 // render 幂等：首次构建 DOM 并挂一次性委托监听；后续调用直接返回（浏览中的子页不被状态刷新打断）。
 // 双平台：顶部切换网易云/QQ音乐，所有请求带 provider，选择记忆在 localStorage。
 
-let langMap = null; // 语种榜过滤结果（模块级，供 tab 切换）
 let provider = localStorage.getItem('jukebox_provider') || 'netease'; // 当前平台
-// 各平台「热门榜/新歌榜」榜单 id 与语种榜名称关键词
+// 各平台「热门榜/新歌榜/KTV榜」来源：网易云 KTV 用官方「麦霸练歌房」歌单（KTV唛榜全榜仅 11 首），QQ 用 K歌金曲榜
 const HOT_IDS = { netease: '3778678', qq: '26' };
 const NEW_IDS = { netease: '3779629', qq: '27' };
-const LANG_KEYS = {
-  netease: [['华语', '华语'], ['欧美', '欧美'], ['日韩', '日本', '日语', '韩语', '韩国'], ['粤语', '粤语']],
-  qq: [['华语', '内地', '台湾'], ['粤语', '香港'], ['欧美', '欧美'], ['日韩', '日本', '韩国']],
+const KTV_SOURCES = {
+  netease: { kind: 'playlist', id: '2790812763' },
+  qq: { kind: 'toplist', id: '36' },
 };
 
 export function render(el, ctx) {
@@ -60,7 +59,7 @@ async function getJSON(url, opts) {
 }
 const TILES = [
   { icon: '🎤', name: '歌手', page: 'artistCats' },
-  { icon: '🌍', name: '语种', page: 'toplist', arg: { lang: true } },
+  { icon: '🎙️', name: 'KTV榜', page: 'toplist', arg: { id: 'ktv' } },
   { icon: '🎨', name: '风格', page: 'styles' },
   { icon: '🔤', name: '拼音A-Z', page: 'letters' },
   { icon: '🔥', name: '热门榜', page: 'toplist', arg: { id: 'hot' } },
@@ -126,14 +125,6 @@ function bind(el, ctx) {
       <div class="song-row"><div class="body"><div class="name">${esc(t.name)}</div></div>
       <button class="btn" data-toplist="${esc(t.id)}">进去</button></div>`).join('');
   }
-  function renderLangLists(key) {
-    const keys = [...langMap.keys()];
-    const active = key || keys[0];
-    $('#subpage').innerHTML = subhead('语种榜') +
-      tabRowHtml(keys.map((k) => [k, k]), active) +
-      renderListRows(langMap.get(active) || []);
-  }
-
   // ===== 搜索（防抖 280ms；input 事件冒泡，委托在 el 上） =====
   let debounce = null;
   let seq = 0;
@@ -230,24 +221,20 @@ function bind(el, ctx) {
     try {
       if (page === 'artistCats') { await artistList('male'); return; }
       if (page === 'toplist') {
+        if (arg.id === 'ktv') {
+          const src = KTV_SOURCES[provider];
+          await songPage('KTV榜', () => getJSON(src.kind === 'playlist'
+            ? `/api/playlist-songs?id=${src.id}&provider=${provider}`
+            : `/api/toplist?id=${src.id}&provider=${provider}`));
+          return;
+        }
         if (arg.id) {
           const id = arg.id === 'hot' ? HOT_IDS[provider] : arg.id === 'new' ? NEW_IDS[provider] : arg.id;
           await songPage('榜单歌曲', () => getJSON(`/api/toplist?id=${id}&provider=${provider}`));
           return;
         }
         const data = await getJSON(`/api/toplist?provider=${provider}`);
-        const lists = data.lists || [];
-        if (arg.lang) {
-          langMap = new Map();
-          for (const [label, ...keys] of LANG_KEYS[provider]) {
-            const found = lists.filter((l) => keys.some((k) => l.name.includes(k)));
-            if (found.length) langMap.set(label, found);
-          }
-          if (langMap.size) renderLangLists();
-          else $('#subpage').innerHTML = subhead('语种榜') + '<div class="empty-tip">暂无语种榜数据</div>';
-        } else {
-          $('#subpage').innerHTML = subhead('榜单') + renderListRows(lists);
-        }
+        $('#subpage').innerHTML = subhead('榜单') + renderListRows(data.lists || []);
         return;
       }
       if (page === 'styles') {
@@ -276,11 +263,7 @@ function bind(el, ctx) {
     if (tile) { openPage(tile.dataset.page, tile.dataset.arg ? JSON.parse(tile.dataset.arg) : {}); return; }
     if (e.target.closest('#subpage .back')) { hideSub(); return; }
     const tab = e.target.closest('[data-tabkey]');
-    if (tab) {
-      if (langMap && langMap.has(tab.dataset.tabkey)) { renderLangLists(tab.dataset.tabkey); return; }
-      artistList(tab.dataset.tabkey);
-      return;
-    }
+    if (tab) { artistList(tab.dataset.tabkey); return; }
     const tl = e.target.closest('[data-toplist]');
     if (tl) { songPage('榜单歌曲', () => getJSON(`/api/toplist?id=${tl.dataset.toplist}&provider=${provider}`)); return; }
     const st = e.target.closest('[data-style]');
