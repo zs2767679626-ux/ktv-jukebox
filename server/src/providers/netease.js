@@ -102,9 +102,10 @@ function createNetease(api, opts = {}) {
   }
 
   async function toplistSongs(id) {
-    const res = await api.toplist_detail();
-    const target = (res.body?.list || []).find((t) => String(t.id) === String(id));
-    return (target?.tracks || []).map(normalize);
+    // toplist_detail 的 tracks 只有 {first:歌名, second:歌手} 名字对，没有歌曲 id；
+    // 榜单 id 本质是歌单，走 playlist_detail 才能拿到完整歌曲对象。
+    const res = await api.playlist_detail({ id });
+    return ((res.body?.playlist?.tracks) || []).slice(0, 100).map(normalize);
   }
 
   async function catlist() {

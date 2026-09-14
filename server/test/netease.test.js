@@ -17,7 +17,7 @@ function fakeApi(overrides = {}) {
     lyric: async () => ({ body: { lrc: { lyric: '[00:00.00]词' } } }),
     artist_list: async () => ({ body: { artists: [{ id: 7, name: '某歌手', picUrl: 'p' }] } }),
     artist_songs: async () => ({ body: { songs: [{ id: 3, name: '歌', ar: [{ name: '某人' }], dt: 1000, fee: 4 }] } }),
-    toplist_detail: async () => ({ body: { list: [{ id: 3778678, name: '热歌榜', tracks: [{ id: 5, name: '热歌', ar: [{ name: '热' }], dt: 2000, fee: 0 }] }] } }),
+    toplist_detail: async () => ({ body: { list: [{ id: 3778678, name: '热歌榜', tracks: [{ first: '热歌', second: '热' }] }] } }),
     playlist_catlist: async () => ({ body: { sub: [{ name: '流行' }, { name: '摇滚' }] } }),
     top_playlist: async () => ({ body: { playlists: [{ id: 9, name: '流行精选', coverImgUrl: 'c' }] } }),
     playlist_detail: async () => ({ body: { playlist: { tracks: [{ id: 8, name: '歌单歌', ar: [{ name: 'a' }], dt: 3000, fee: 0 }] } } }),
@@ -107,7 +107,8 @@ test('toplists/toplistSongs/artists/catlist/playlist 各返回归一化结构', 
   const lists = await n.toplists();
   assert.equal(lists[0].name, '热歌榜');
   const songs = await n.toplistSongs('3778678');
-  assert.equal(songs[0].title, '热歌');
+  assert.equal(songs[0].title, '歌单歌');
+  assert.equal(songs[0].song_id, '8');
   const artists = await n.artists('male');
   assert.equal(artists[0].id, '7');
   assert.deepEqual(await n.catlist(), ['流行', '摇滚']);
