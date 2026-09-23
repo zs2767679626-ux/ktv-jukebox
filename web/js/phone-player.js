@@ -16,6 +16,7 @@
   let stateWs = null;
   let stoppedByTakeover = false; // 被电脑端接管：不自动抢回，等用户点按钮
   let unlockDone = false;        // 用户已手动点过「开始」，浏览器放行自动播放
+  let pausedByServer = false;    // 本次暂停是否来自服务器指令（否则视为被别的 App 打断）
   let currentUrl = null;
   let startedSent = false;
   let erroredSent = false;
@@ -90,8 +91,9 @@
         if (cmd.muted !== undefined) audio.muted = cmd.muted;
         loadAndPlay(cmd.url);
         break;
-      case 'pause': audio.pause(); break;
+      case 'pause': pausedByServer = true; audio.pause(); break;
       case 'resume':
+        pausedByServer = false;
         if (audio.src) audio.play().catch((err) => { if (err && err.name === 'NotAllowedError') maybeUnlock(); });
         break;
       case 'volume': audio.volume = (cmd.value || 0) / 100; break;
@@ -101,6 +103,7 @@
 
   function loadAndPlay(url) {
     currentUrl = url;
+    pausedByServer = false;
     startedSent = false;
     erroredSent = false;
     clearTimeout(startTimer);
@@ -119,6 +122,7 @@
   function stopAudio() {
     currentUrl = null;
     clearTimeout(startTimer);
+    $('interruptOverlay').classList.add('hidden');
     try { audio.pause(); } catch {}
     audio.removeAttribute('src');
     audio.load();
@@ -153,8 +157,17 @@
   audio.addEventListener('error', () => { sendError('加载失败'); });
   audio.addEventListener('timeupdate', renderProgress);
   audio.addEventListener('durationchange', renderProgress);
-  audio.addEventListener('play', updateCover);
-  audio.addEventListener('pause', updateCover);
+  audio.addEventListener('play', () => {
+    $('interruptOverlay').classList.add('hidden');
+    updateCover();
+  });
+  audio.addEventListener('pause', () => {
+    updateCover();
+    // 不是服务器指令、也没自然播完：手机别的 App（网易云等）抢了声音，提示用户恢复
+    if (currentUrl && !audio.ended && !pausedByServer && !stoppedByTakeover) {
+      $('interruptOverlay').classList.remove('hidden');
+    }
+  });
 
   // ---------- 界面 ----------
   function renderState(st) {
@@ -270,6 +283,10 @@
     stoppedByTakeover = false;
     $('takeoverOverlay').classList.add('hidden');
     connectPlayer();
+  });
+  $('resumeBtn').addEventListener('click', () => {
+    $('interruptOverlay').classList.add('hidden');
+    if (audio.src) audio.play().catch(() => {});
   });
   $('pauseBtn').addEventListener('click', () => {
     if (!lastState || !lastState.current) return;
