@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d0f14" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>点歌台 · 手机播放</title>
+  <link rel="stylesheet" href="css/phone.css" />
+</head>
+<body>
+  <!-- 口令层：首次使用/口令错误时显示 -->
+  <div id="tokenOverlay" class="overlay hidden">
+    <div class="box">
+      <h1>🎤 手机播放端</h1>
+      <p class="dim">首次使用请输入播放端口令<br />（电脑上 player_config.json 文件里的 token 值）</p>
+      <input id="tokenInput" type="password" autocomplete="off" placeholder="口令" />
+      <button id="tokenOk" class="btn primary big">连接</button>
+      <p id="tokenErr" class="err"></p>
+    </div>
+  </div>
+  <!-- 解锁层：手机浏览器要求先手动点一次才允许自动播放 -->
+  <div id="tapOverlay" class="overlay hidden">
+    <div class="box">
+      <h1>🔊 点一下启用声音</h1>
+      <p class="dim">手机浏览器的自动播放限制，点一次之后全程自动</p>
+      <button id="tapOk" class="btn primary big">开始</button>
+    </div>
+  </div>
+  <!-- 接管层：电脑播放端把播放权抢回去时显示 -->
+  <div id="takeoverOverlay" class="overlay hidden">
+    <div class="box">
+      <h1>🖥 播放权已被电脑端接管</h1>
+      <p class="dim">电脑上的播放端重新连上了，声音切回了电脑。想切回手机点下面。</p>
+      <button id="retakeBtn" class="btn primary big">抢回播放权</button>
+    </div>
+  </div>
+
+  <main id="stage">
+    <div id="topbar">
+      <span id="modeTag" class="chip">顺序</span>
+      <span id="status">连接中…</span>
+    </div>
+    <div id="cover"><div class="hole" id="coverEmoji">💿</div></div>
+    <div id="nowTitle">还没有歌，去点一首吧</div>
+    <div id="nowMeta"></div>
+    <div id="progressWrap">
+      <div id="progress"><i id="progressBar"></i></div>
+      <div id="times"><span id="tCur">0:00</span><span id="tDur">--:--</span></div>
+    </div>
+    <div id="nextBox" class="hidden">
+      <h3>接下来</h3>
+      <ol id="nextList"></ol>
+    </div>
+  </main>
+
+  <nav id="bottomBar">
+    <button id="pauseBtn" class="btn big round" disabled>⏸</button>
+    <button id="skipBtn" class="btn big round" disabled>⏭</button>
+    <label id="wakeLabel"><input type="checkbox" id="wakeCb" /> 保持亮屏</label>
+  </nav>
+  <p id="wakeHint" class="hidden">此浏览器不支持保持亮屏（iPhone 请开系统屏幕常亮或插电）</p>
+
+  <script src="js/phone-player.js"></script>
+</body>
+</html>

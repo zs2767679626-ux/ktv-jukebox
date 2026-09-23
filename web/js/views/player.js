@@ -43,6 +43,11 @@ export function render(el, ctx) {
       <h2>扫码点歌</h2>
       <div id="qrcode"></div>
       <p class="qr-tip">同事用手机扫一扫，直接进入点歌台</p>
+    </div>
+    <div class="card qr">
+      <h2>📱 手机播放</h2>
+      <div id="phoneQr"></div>
+      <p class="qr-tip">手机连办公室 WiFi + 蓝牙音响，用相机扫码（微信扫可能打不开）</p>
     </div>`;
   bind(el, ctx);
   update(el, ctx);
@@ -70,9 +75,9 @@ function bind(el, ctx) {
   setInterval(() => tick(el, ctx), 250);
   // 二维码（qrcodejs 全局对象；vendor 缺失时静默跳过）。
   // 内容优先取服务器局域网地址——即使用 127.0.0.1 打开页面，同事手机扫到的也是手机能访问的地址。
-  function renderQr(text) {
+  function renderQr(target, text) {
     if (typeof window.QRCode === 'undefined') return;
-    new window.QRCode(el.querySelector('#qrcode'), {
+    new window.QRCode(target, {
       text,
       width: 128, height: 128,
       correctLevel: window.QRCode.CorrectLevel.M,
@@ -80,8 +85,15 @@ function bind(el, ctx) {
   }
   fetch('/api/server-info')
     .then((r) => r.json())
-    .then((info) => renderQr((info.lanUrls && info.lanUrls[0]) || (location.origin + location.pathname)))
-    .catch(() => renderQr(location.origin + location.pathname));
+    .then((info) => {
+      const base = (info.lanUrls && info.lanUrls[0]) || (location.origin + location.pathname);
+      renderQr(el.querySelector('#qrcode'), base);
+      renderQr(el.querySelector('#phoneQr'), base + '/phone.html');
+    })
+    .catch(() => {
+      renderQr(el.querySelector('#qrcode'), location.origin + location.pathname);
+      renderQr(el.querySelector('#phoneQr'), location.origin + '/phone.html');
+    });
 }
 
 function update(el, ctx) {
