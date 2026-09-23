@@ -108,11 +108,14 @@ body {
   position: fixed; inset: 0; z-index: 10;
   background: rgba(10, 11, 16, .9);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  display: flex; align-items: center; justify-content: center; padding: 24px;
+  display: flex; align-items: flex-start; justify-content: center; padding: 24px;
+  /* 键盘弹出时视口变矮：允许滚动 + 盒子自适应居中，输入框不会被键盘挡住 */
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
 }
 .overlay .box {
   background: var(--card); border: 1px solid var(--border); border-radius: 16px;
   padding: 28px 24px; max-width: 340px; width: 100%; text-align: center;
+  margin: auto 0;
 }
 .overlay h1 { margin: 0 0 10px; font-size: 20px; }
 .overlay p { margin: 0 0 14px; font-size: 13px; line-height: 1.6; }
