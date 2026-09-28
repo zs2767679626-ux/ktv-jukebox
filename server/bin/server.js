@@ -18,13 +18,24 @@ const providers = createProviders({
   initialNeteaseCookie: store.getSetting('netease_cookie') || config.neteaseCookie,
   initialQQCredential: store.getSetting('qq_cookie') || '',
 });
-// 局域网访问地址（网页端「扫码点歌」二维码内容）
+// 局域网访问地址（网页端「扫码点歌」二维码内容）。
+// 按手机可达性排序：192.168.* / 10.* 的真实局域网优先，
+// 172.16-31（Docker/WSL 虚拟网卡 NAT 段）殿后——前端取 lanUrls[0] 生成二维码，
+// 排错顺序会让手机扫到虚拟网卡地址连不上（卡加载）。
 const lanUrls = [];
 for (const addrs of Object.values(os.networkInterfaces())) {
   for (const a of addrs) {
     if (a.family === 'IPv4' && !a.internal) lanUrls.push(`http://${a.address}:${config.port}`);
   }
 }
+const lanRank = (url) => {
+  const ip = url.split(':')[1].slice(2);
+  if (ip.startsWith('192.168.')) return 0;
+  if (ip.startsWith('10.')) return 1;
+  if (ip.startsWith('172.')) return 2;
+  return 3;
+};
+lanUrls.sort((x, y) => lanRank(x) - lanRank(y));
 const { server } = createApp({
   providers,
   history: store,
