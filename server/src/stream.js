@@ -8,6 +8,9 @@ const { Readable } = require('node:stream');
 // 关键设计：
 // - 静音垫底：队列无歌/暂停/被电脑端接管时，按节拍写静音 mp3——音频元素永不 stall
 //   （元素一停摆，iOS 会冻结后台页面、掐断连接）；静音→音乐切换在首个音乐块到达时瞬时完成。
+// - 实时节流：音乐全量下载后按歌曲时长 1x 推送（带 5 秒预冲缓冲垫）。「字节推完」≠「播完」——
+//   办公室带宽几秒就能推完整首歌，若按字节完切歌，手机端收到的是多首歌拼成的垃圾流，解码器直接无声。
+//   切歌也按时长判定，与手机端真实播放同步。
 // - mp3-only：流内不能切换编码格式（m4a 接 mp3 会把手机解码器卡死）。队列解析时已按
 //   isStreamPlayerActive 选 mp3Only 阶梯；此处的 m4a 兜底重取覆盖解析竞态边路。
 // - 慢客户端驱逐：扇出时背压超标（本地锁屏暂停塞满缓冲）者单独踢掉，不拖累别人。
@@ -25,14 +28,18 @@ function createStream({
   stallMs = 20000,         // 上游连续无数据超时 → error（队列自动跳过）
   evictLimit = 1 << 20,    // 客户端 writableLength 超过即销毁（约 2 分钟缓冲，健康客户端远低于此）
   silenceIntervalMs = 450, // 静音节拍（略快于 0.5s 静音帧时长；配合 2× 上限检查保持客户端仅领先约 1 秒）
+  tickCap = 512 * 1024,    // 每 tick 推送上限：防首推 burst 把健康客户端缓冲塞爆误驱逐（测试可调大加速驱逐用例）
   log = () => {},
 }) {
   const clients = new Set();  // http.ServerResponse
   let active = false;         // mock 是否为 ws.js 当前播放端
   let upstream = null;        // { ac: AbortController, rs: Readable }
-  let currentSong = null;     // resume 时重解析用
+  let currentSong = null;     // resume 时重解析用（song.duration_ms 驱动节流推送）
   let silenceTimer = null;
   let stallTimer = null;
+  let feedTimer = null;       // 音乐节流推送定时器
+  let feeding = false;        // 节流推送进行中（下载完成后 upstream 已为 null，不能用 upstream 判断）
+  let feedGen = 0;            // 推送代际：abortUpstream 自增，异步推送循环在让出点据此收手
   let startedSent = false;
 
   const mockSocket = {
@@ -69,6 +76,9 @@ function createStream({
   function hold() { abortUpstream(); startSilence(); }
 
   function abortUpstream() {
+    feedGen++;   // 停掉在途异步推送循环（切歌/暂停/被顶）
+    feeding = false;
+    if (feedTimer) { clearTimeout(feedTimer); feedTimer = null; } // 停止节流推送（切歌/暂停/被顶）
     if (!upstream) return;
     const u = upstream; upstream = null;
     clearTimeout(stallTimer);
@@ -78,7 +88,7 @@ function createStream({
 
   async function pipe(url) {
     abortUpstream();
-    // 静音不停：解析/取流期间静音照常打点，客户端缓冲不断；首个音乐块到达才停（见 data 分支）
+    // 静音不停：下载期间静音照常打点，客户端缓冲不断；首块音乐推到才停（见 startFeeding）
     const ac = new AbortController();
     upstream = { ac, rs: null };
     let res;
@@ -95,30 +105,91 @@ function createStream({
     let rs;
     try { rs = Readable.fromWeb(res.body); } catch { upstream = null; emitError('加载失败'); return; }
     upstream.rs = rs;
-    startedSent = false;
     const armStall = () => {
       clearTimeout(stallTimer);
       stallTimer = setTimeout(() => onUpstreamError(new Error('upstream stalled')), stallMs);
       if (stallTimer.unref) stallTimer.unref();
     };
     armStall();
-    rs.on('data', (chunk) => {
-      if (!upstream || upstream.rs !== rs) return;
-      armStall();
-      if (!startedSent) {
-        startedSent = true;
-        stopSilence();
-        if (active) jukebox.playerEvent('started'); // queue 据此重置 started_at
+    // 全量下载（单曲 ≤ 几十 MB，内存可接受）：节流推送必须知道文件总长。
+    // 若按「字节推完=播完」边下边推，办公室带宽几秒就把整首歌推光、服务器立刻切歌，
+    // 手机端收到的是多首歌拼在一起的垃圾流，解码器直接卡死无声。
+    const parts = [];
+    try {
+      for await (const chunk of rs) {
+        if (!upstream || upstream.ac !== ac) return;
+        armStall();
+        parts.push(chunk);
       }
-      for (const res of [...clients]) write(res, chunk);
-    });
-    rs.on('end', () => {
-      if (!upstream || upstream.rs !== rs) return;
-      upstream = null; clearTimeout(stallTimer);
+    } catch (e) {
+      if (!upstream || upstream.ac !== ac) return;
+      onUpstreamError(e); // 主动中止时 abortUpstream 已置 null upstream，走不到这；真错误发 error 让队列跳过
+      return;
+    }
+    if (!upstream || upstream.ac !== ac) return;
+    upstream = null;
+    clearTimeout(stallTimer);
+    const buf = Buffer.concat(parts.map((c) => Buffer.from(c)));
+    if (!buf.length || !isMp3(buf)) { emitError('加载失败'); return; } // 非 mp3（flac/ogg/m4a）手机解码不了
+    startFeeding(buf);
+  }
+
+  // 按歌曲真实时长节流推送：推速 ≈ 1x 实时播放 + 5 秒预冲缓冲垫（手机断网/卡顿的保险）。
+  // 「播完」也按时长判定——到点即 finished，与手机端真实播放同步切歌。
+  // 循环每写一块让出一次事件循环（setImmediate）：健康客户端趁隙排水，慢客户端背压立现被驱逐；
+  // 没有让出点的话，大 burst 会同步塞爆所有客户端的 writableLength，健康端也遭误驱逐。
+  function startFeeding(buf) {
+    stopSilence();
+    feeding = true;
+    const durationMs = currentSong && currentSong.duration_ms > 0 ? currentSong.duration_ms : 240000;
+    const preloadMs = 5000;
+    const TICK_MS = 100;
+    const t0 = Date.now();
+    const gen = feedGen; // 本首歌的代际：切歌/暂停/被顶时 abortUpstream 自增，让出点校验立即收手
+    let pushed = 0;
+    startedSent = false;
+    const finish = () => {
+      if (feedTimer) { clearTimeout(feedTimer); feedTimer = null; }
+      feeding = false;
       if (active) jukebox.playerEvent('finished'); // queue 接播下一首
       startSilence();                              // 歌曲间隙：静音垫底
-    });
-    rs.on('error', (e) => onUpstreamError(e));
+    };
+    const tick = async () => {
+      feedTimer = null;
+      const elapsed = Date.now() - t0;
+      if (elapsed >= durationMs) { finish(); return; } // 按时长切歌：手机播完的时刻（预冲 5s，字节会提前推完）
+      if (pushed < buf.length) {
+        const target = Math.min(buf.length, Math.ceil(buf.length * (elapsed + preloadMs) / durationMs));
+        let budget = tickCap;
+        while (pushed < target && budget > 0) {
+          const n = Math.min(64 * 1024, target - pushed, budget);
+          fanout(buf.subarray(pushed, pushed + n));
+          pushed += n;
+          budget -= n;
+          if (!startedSent) {
+            startedSent = true;
+            if (active) jukebox.playerEvent('started'); // 真实起播点：首个音乐块推达手机，queue 据此重置 started_at
+          }
+          await new Promise((r) => setImmediate(r)); // 让出：健康客户端排水、慢客户端显背压
+          if (gen !== feedGen) return;               // 已被切歌/暂停/被顶：不再推、不再续定时器
+        }
+      } else {
+        startSilence(); // 文件比 duration_ms 短：末尾静音垫到时长，防手机元素 buffer 干涸 stall
+      }
+      feedTimer = setTimeout(tick, TICK_MS);
+      if (feedTimer.unref) feedTimer.unref();
+    };
+    tick();
+  }
+
+  function isMp3(buf) {
+    if (buf.length >= 3 && buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) return true; // ID3 头
+    if (buf.length >= 2 && buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return true;            // MPEG 帧同步
+    return false;
+  }
+
+  function fanout(chunk) {
+    for (const res of [...clients]) write(res, chunk);
   }
 
   function onUpstreamError(e) {
@@ -199,7 +270,7 @@ function createStream({
     res.on('close', () => removeClient(res));
     res.on('error', () => {});
     if (!active) activate(); // 新连接即注册（含被顶掉后「抢回」的重连）
-    if (!upstream) startSilence();
+    if (!upstream && !feeding) startSilence(); // 喂歌中不垫静音：半途加入的客户端直接收下一块音乐
   }
   function removeClient(res) {
     if (!clients.delete(res)) return;

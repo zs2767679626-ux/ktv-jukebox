@@ -13,16 +13,17 @@ const SILENCE = Buffer.alloc(64); // 测试静音帧（全零）
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SONG = (t) => ({ text: t, song_id: t, title: t, artist: 'X', duration_ms: 60000, fee: 0 });
 
-// 假上游：按 gapMs 节奏逐块吐字节；cancel/跑完自动停（有界，不泄漏挂住进程）。
-// fromWeb 侧 destroy 可能不触发 cancel，靠有限块数兜底——块数×间隔控制在 ~2s 内。
-function bodyStream(chunks, gapMs = 2) {
+// 假上游：逐块吐字节。gapMs=0 时同步全量 enqueue（本环境 await+setTimeout 每轮要 ~14ms，
+// 400 块就是 6 秒，会拖爆 waitFor；同步 enqueue 几毫秒完事）；gapMs>0 时按节奏吐，
+// 供「下载中」状态的用例（切歌/顶替要打在下载中途）。cancel/跑完自动停（有界，不泄漏）。
+function bodyStream(chunks, gapMs = 0) {
   let done = false;
   return new ReadableStream({
     start(controller) {
       (async () => {
         try {
           for (const c of chunks) {
-            await sleep(gapMs);
+            if (gapMs > 0) await sleep(gapMs);
             if (done) return;
             controller.enqueue(c);
           }
@@ -33,9 +34,13 @@ function bodyStream(chunks, gapMs = 2) {
     cancel() { done = true; },
   });
 }
-// marker 字节 × n 块；routes 里的值可以是流本体，也可以是工厂（每次 fetch 新流，供 resume 重取用）
-const music = (marker, n = 400, size = 64, gapMs = 2) =>
-  () => bodyStream(Array.from({ length: n }, () => Buffer.alloc(size, marker)));
+// marker 字节 × n 块；routes 里的值可以是流本体，也可以是工厂（每次 fetch 新流，供 resume 重取用）。
+// 首块开头写 ID3 魔数——stream.js 下载完后校验 mp3 格式，纯 marker 字节会被判为格式错误跳过。
+const music = (marker, n = 400, size = 64, gapMs = 0) => () => {
+  const chunks = Array.from({ length: n }, () => Buffer.alloc(size, marker));
+  chunks[0].write('ID3');
+  return bodyStream(chunks, gapMs);
+};
 
 const waitFor = async (pred, t = 5000, label = '') => {
   const deadline = Date.now() + t;
@@ -81,6 +86,7 @@ async function withStream(opts, handler) {
       silenceIntervalMs: opts.silenceIntervalMs ?? 15,
       stallMs: opts.stallMs ?? 20000,
       evictLimit: opts.evictLimit ?? (1 << 20),
+      tickCap: opts.tickCap, // undefined → 生产默认
     },
   });
   await new Promise((r) => server.listen(0, r));
@@ -107,6 +113,7 @@ async function withStream(opts, handler) {
     req.on('error', () => {});
     return {
       buf: () => Buffer.concat(chunks),
+      len: () => chunks.reduce((s, c) => s + c.length, 0), // 只加总不拷贝：大流量用例轮询不拖慢事件循环
       close: () => req.destroy(),
     };
   };
@@ -174,15 +181,16 @@ test('点歌：流客户端收到音乐字节', async () => {
   });
 });
 
-test('切歌：旧上游 abort，新歌字节到达', async () => {
+test('切歌：下载中的旧上游被 abort，新歌字节到达', async () => {
   await withStream({
-    routes: { 'http://A.mp3': music(0x41), 'http://B.mp3': music(0x42) },
+    // A 是 10 秒长下载（流端全量下载完才开推），skip 打在下载中途
+    routes: { 'http://A.mp3': music(0x41, 2000, 64, 5), 'http://B.mp3': music(0x42) },
   }, async ({ jukebox, fetchCalls, streamCollector }) => {
     const col = streamCollector();
     await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
     jukebox.addToQueue(SONG('A'));
     jukebox.addToQueue(SONG('B'));
-    await waitFor(() => col.buf().includes(0x41), 5000, 'A 起播');
+    await waitFor(() => fetchCalls.length >= 1, 5000, 'A 开始下载');
     jukebox.skip();
     await waitFor(() => col.buf().includes(0x42), 5000, 'B 的字节');
     assert.equal(fetchCalls[0].init.signal.aborted, true); // 旧上游已 abort
@@ -193,7 +201,7 @@ test('切歌：旧上游 abort，新歌字节到达', async () => {
 
 test('暂停转静音垫底；恢复重解析(mp3Only)从头流 + started_at 重置', async () => {
   await withStream({
-    routes: { 'http://A.mp3': music(0x41, 2000, 64, 2) },
+    routes: { 'http://A.mp3': music(0x41, 400) }, // 快下载（gap 0），5s 超时内稳起播；resume 还要再下一遍
   }, async ({ jukebox, resolveCalls, streamCollector }) => {
     const col = streamCollector();
     await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
@@ -252,18 +260,18 @@ test('最后一个流客户端断开：playerGone 语义（当前歌记断线跳
   });
 });
 
-test('桌面播放端接入：流被顶替转静音，旧上游 abort', async () => {
-  await withStream({ routes: { 'http://A.mp3': music(0x41, 800) } }, async ({ jukebox, fetchCalls, wsClient, streamCollector }) => {
+test('桌面播放端接入：流被顶替转静音，下载中的上游被 abort', async () => {
+  await withStream({ routes: { 'http://A.mp3': music(0x41, 2000, 64, 5) } }, async ({ jukebox, fetchCalls, wsClient, streamCollector }) => {
     const col = streamCollector();
     await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
     jukebox.addToQueue(SONG('A'));
-    await waitFor(() => col.buf().includes(0x41), 5000, 'A 起播');
+    await waitFor(() => fetchCalls.length >= 1, 5000, 'A 开始下载'); // 10 秒长下载：顶替打在下载中途
     const desktop = await wsClient();
     desktop.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
     await waitFor(() => {
       const b = col.buf();
       return b.length >= 256 && b.subarray(b.length - 256).every((x) => x === 0);
-    }, 5000, '被顶替后转静音');
+    }, 5000, '被顶替后转静音'); // 下载期间静音照常垫底，顶替后静音持续
     assert.equal(fetchCalls[0].init.signal.aborted, true);
     assert.equal(jukebox.getState().playerOnline, true); // 播放权在桌面端，在线状态保持
     desktop.close();
@@ -299,10 +307,17 @@ test('桌面端断开：流端自动抢回（reclaim）并接播下一首', asyn
 
 test('多客户端扇出；慢客户端背压超标被驱逐，不拖累他人', async () => {
   await withStream({
-    // 泵速 1ms/16KB：健康客户端轻松跟上；慢客户端暂停 socket 制造背压（内核缓冲几 MB 内必满）
-    routes: { 'http://A.mp3': music(0x41, 1000, 16384, 1) },
-    evictLimit: 256, // 调小驱逐线加速测试
+    // 64MB 大文件 + 大 tickCap（40MB/s 级 burst）：慢客户端内核缓冲必满被驱逐。
+    // 推送循环每 64KB 让出事件循环，健康客户端趁隙排水，不会被大 burst 误驱逐
+    routes: { 'http://A.mp3': music(0x41, 4000, 16384) },
+    evictLimit: 256,     // 调小驱逐线加速测试
+    tickCap: 4 << 20,    // 4MB/tick
   }, async ({ port, jukebox, streamer, streamCollector }) => {
+    const A = SONG('A'); A.duration_ms = 8000; // 短时长 → 推速高，驱逐发生得早
+    // 两个客户端都在点歌前的静音期连好（事件循环空闲，连接回调即时处理）：
+    // 64MB 下载会阻塞事件循环 ~数百 ms，若健康客户端在点歌后才连，回调可能拖到
+    // 慢客户端已被驱逐之后才处理，客户端数 1→0→1 永远不经过 2，测试变成时序竞态
+    const col = streamCollector();
     // 慢客户端：暂停原始 socket 停止读（res.pause() 只停 data 事件、Node 仍往内存读，无背压）。
     // Windows 上暂停态客户端感知不到对端关闭（不读 socket 就看不到 RST），驱逐结果用服务器侧客户端数断言
     const slowReq = http.get({ port, path: '/stream?token=tok' }, (res) => {
@@ -311,15 +326,14 @@ test('多客户端扇出；慢客户端背压超标被驱逐，不拖累他人',
     });
     slowReq.on('error', () => {});
     try {
-      await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
-      jukebox.addToQueue(SONG('A')); // 开播，音乐扇出给两个客户端
-      const col = streamCollector(); // 健康客户端
       await waitFor(() => streamer.getClientCount() === 2, 5000, '两个客户端都在');
-      await waitFor(() => col.buf().length >= 2048, 5000, '健康客户端正常收流');
+      await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
+      jukebox.addToQueue(A); // 开播，音乐扇出给两个客户端
       await waitFor(() => streamer.getClientCount() === 1, 5000, '慢客户端被驱逐');
       assert.equal(jukebox.getState().playerOnline, true); // 还有健康客户端，播放交椅不掉
-      const lenBefore = col.buf().length;
-      await waitFor(() => col.buf().length >= lenBefore + 1024, 5000, '驱逐后健康客户端不受影响');
+      const lenBefore = col.len();
+      await waitFor(() => col.len() >= lenBefore + 1024, 5000, '驱逐后健康客户端不受影响');
+      await waitFor(() => col.buf().includes(0x41), 5000, '健康客户端收到音乐字节');
       col.close();
     } finally {
       slowReq.destroy(); // 半开连接必须在进程内显式销毁，否则挂住事件循环
