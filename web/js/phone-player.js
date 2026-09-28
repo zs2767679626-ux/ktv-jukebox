@@ -21,6 +21,14 @@
 
   const mode = localStorage.getItem(MODE_KEY) === 'normal' ? 'normal' : 'radio';
   let token = localStorage.getItem(TOKEN_KEY) || '';
+  // 二维码直带口令：电脑 IP 变动会让手机把新地址当全新网站（localStorage 随 origin 失效），
+  // 从 URL 取口令即恢复「扫码即播放端」；取完立刻清掉地址栏参数，防历史记录/截图泄露
+  const urlToken = new URLSearchParams(location.search).get('token');
+  if (urlToken) {
+    localStorage.setItem(TOKEN_KEY, urlToken);
+    token = urlToken;
+    history.replaceState(null, '', location.pathname);
+  }
   let playerWs = null;
   let stateWs = null;
   let stoppedByTakeover = false; // 被电脑端接管：不自动抢回，等用户点按钮

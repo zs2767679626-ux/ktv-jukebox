@@ -8,10 +8,10 @@ const { createRealtime } = require('./ws');
 const { createStream } = require('./stream');
 
 // 组装整个应用。providers/history 等依赖注入，便于测试。
-function createApp({ providers, history, isPlayerToken, webDir, lanUrls, streamOptions = {} }) {
+function createApp({ providers, history, isPlayerToken, webDir, lanUrls, deviceToken, streamOptions = {} }) {
   const app = express();
   app.use(express.json());
-  app.use('/api', createApi({ providers, store: history, lanUrls }));
+  app.use('/api', createApi({ providers, store: history, lanUrls, deviceToken }));
   app.use(express.static(webDir));
   // 电台流：必须在 SPA 兜底之前注册（兜底正则 ^\/(?!api) 会吞掉 /stream 返回 index.html）
   let streamer = null;

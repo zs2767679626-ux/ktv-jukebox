@@ -87,8 +87,10 @@ function bind(el, ctx) {
     .then((r) => r.json())
     .then((info) => {
       const base = (info.lanUrls && info.lanUrls[0]) || (location.origin + location.pathname);
+      // 播放端二维码直带口令：扫码即播放端（IP 变动后手机 localStorage 会随 origin 失效，免重输）
+      const tok = info.deviceToken ? '?token=' + encodeURIComponent(info.deviceToken) : '';
       renderQr(el.querySelector('#qrcode'), base);
-      renderQr(el.querySelector('#phoneQr'), base + '/phone.html');
+      renderQr(el.querySelector('#phoneQr'), base + '/phone.html' + tok);
     })
     .catch(() => {
       renderQr(el.querySelector('#qrcode'), location.origin + location.pathname);

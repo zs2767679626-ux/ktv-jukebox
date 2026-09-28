@@ -35,7 +35,7 @@ async function withServer(handler, extra = {}) {
   const providers = { netease, qq, get: (p) => (p === 'qq' ? qq : netease) };
   const app = express();
   app.use(express.json());
-  app.use('/api', createApi({ providers, store: extra.store || fakeStore, lanUrls: extra.lanUrls || [] }));
+  app.use('/api', createApi({ providers, store: extra.store || fakeStore, lanUrls: extra.lanUrls || [], deviceToken: extra.deviceToken }));
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   const port = server.address().port;
@@ -63,11 +63,11 @@ test('health 与 search（默认 netease，结果盖 provider 章）', async () 
   });
 });
 
-test('server-info 返回局域网地址（扫码点歌二维码用）', async () => {
+test('server-info 返回局域网地址与播放端口令（扫码二维码用）', async () => {
   await withServer(async (port) => {
     const r = await req(port, 'GET', '/api/server-info');
-    assert.deepEqual(r.json, { lanUrls: ['http://192.168.140.67:3000'] });
-  }, { lanUrls: ['http://192.168.140.67:3000'] });
+    assert.deepEqual(r.json, { lanUrls: ['http://192.168.140.67:3000'], deviceToken: 'tok123' });
+  }, { lanUrls: ['http://192.168.140.67:3000'], deviceToken: 'tok123' });
 });
 
 test('search 空关键词返回空数组', async () => {

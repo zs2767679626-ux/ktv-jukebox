@@ -42,6 +42,7 @@ const { server } = createApp({
   isPlayerToken: (t) => Boolean(t) && t === config.deviceToken,
   webDir: path.join(__dirname, '..', '..', 'web'),
   lanUrls,
+  deviceToken: config.deviceToken,
 });
 
 // 防静默死亡：未捕获异常/未处理的 Promise 拒绝只记日志，不杀进程

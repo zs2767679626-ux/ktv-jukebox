@@ -4,7 +4,7 @@ const express = require('express');
 // provider 白名单：路由里的 provider 参数只认这两个值，其余回落 netease
 const PROVIDERS = ['netease', 'qq'];
 
-function createApi({ providers, store, lanUrls }) {
+function createApi({ providers, store, lanUrls, deviceToken }) {
   const r = express.Router();
   const wrap = (fn) => (req, res) =>
     fn(req, res).catch((e) => {
@@ -23,8 +23,9 @@ function createApi({ providers, store, lanUrls }) {
 
   r.get('/health', (req, res) => res.json({ ok: true }));
 
-  // 网页端「扫码点歌」二维码内容：手机能访问的局域网地址
-  r.get('/server-info', (req, res) => res.json({ lanUrls: lanUrls || [] }));
+  // 网页端「扫码点歌」二维码内容：手机能访问的局域网地址；
+  // deviceToken 供播放端二维码直连免输口令（局域网内可获取，代价已知可接受：口令本在配置文件明文）
+  r.get('/server-info', (req, res) => res.json({ lanUrls: lanUrls || [], deviceToken }));
 
   r.post('/search', wrap(async (req, res) => {
     const q = String(req.body?.q || '').trim();
