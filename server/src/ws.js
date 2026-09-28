@@ -3,7 +3,7 @@ const { WebSocketServer } = require('ws');
 const { createJukebox } = require('./queue');
 
 // WebSocket 中枢。连接分类 + 指令分发 + 状态广播 + 心跳。
-function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () => {} }) {
+function createRealtime({ server, history, resolveUrl, isPlayerToken, onPlayerSlotFree = () => {}, log = () => {} }) {
   const wss = new WebSocketServer({ server, path: '/ws' });
   const webClients = new Set();
   let player = null;
@@ -13,8 +13,16 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
       player.send(JSON.stringify({ type: 'player_cmd', cmd }));
     }
   }
+  function stateMsg() {
+    // streamActive：当前播放端是电台流（手机电台模式据此显示「声音在电脑端」）
+    return JSON.stringify({
+      type: 'state',
+      state: { ...jukebox.getState(), streamActive: Boolean(player && player.isStream) },
+      servertime: Date.now(),
+    });
+  }
   function sendState() {
-    const msg = JSON.stringify({ type: 'state', state: jukebox.getState(), servertime: Date.now() });
+    const msg = stateMsg();
     for (const c of webClients) if (c.readyState === 1) c.send(msg);
   }
   function sendToast(msg) {
@@ -29,7 +37,18 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
     sendToPlayer,
     broadcast: sendState,
     toast: sendToast,
+    isStreamPlayerActive: () => Boolean(player && player.isStream),
   });
+
+  // 注册/顶替播放端：真实 WS 与流播放端（mock）共用同一条路径，保留「最后注册者赢」语义
+  function registerPlayer(p) {
+    if (player && player !== p) {
+      if (player.readyState === 1) player.send(JSON.stringify({ type: 'player_replaced' }));
+      try { player.close(); } catch {}
+    }
+    player = p;
+    jukebox.playerHello();
+  }
 
   wss.on('connection', (ws) => {
     ws.isAlive = true;
@@ -45,7 +64,7 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
     // 播放端升级时取消，播放端不收快照帧。
     const snapTimer = setTimeout(() => {
       if (role === 'web' && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'state', state: jukebox.getState(), servertime: Date.now() }));
+        ws.send(stateMsg());
       }
     }, 30);
 
@@ -56,14 +75,9 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
         clearTimeout(snapTimer);
         webClients.delete(ws);
         role = 'player';
-        if (player) {
-          // 通知旧播放端被顶替：它收到后自动退出进程，不再重连回来对轰
-          if (player.readyState === 1) player.send(JSON.stringify({ type: 'player_replaced' }));
-          player.close();
-        }
-        player = ws;
+        // 通知旧播放端被顶替（含流播放端）：它收到后自动退出进程/转静音，不再对轰
+        registerPlayer(ws);
         log('player connected');
-        jukebox.playerHello();
         return;
       }
       if (role === 'player') {
@@ -91,6 +105,7 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
           player = null;
           jukebox.playerGone();
           log('player disconnected');
+          onPlayerSlotFree(); // 播放端交椅空出：流端可自动抢回（若有流客户端在听）
         }
       } else if (role === 'web') {
         webClients.delete(ws);
@@ -108,6 +123,21 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, log = () =
   }, 30000);
   wss.on('close', () => clearInterval(pingTimer));
 
-  return { jukebox, wss };
+  // —— 流播放端（虚拟播放端，见 stream.js）——
+  function setStreamPlayer(mock) {
+    if (!mock || player === mock) return; // 幂等：多客户端共用同一 mock，仅 0→1 注册
+    registerPlayer(mock);
+    log('stream player connected');
+  }
+  function clearStreamPlayer(mock) {
+    if (player === mock) {          // 已被真实播放端顶掉时不误清（镜像 close 处理器里的 player === ws 守卫）
+      player = null;
+      jukebox.playerGone();
+      log('stream player disconnected');
+    }
+  }
+  function isStreamPlayerActive() { return Boolean(player && player.isStream); }
+
+  return { jukebox, wss, setStreamPlayer, clearStreamPlayer, isStreamPlayerActive };
 }
 module.exports = { createRealtime };

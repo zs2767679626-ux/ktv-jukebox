@@ -172,15 +172,20 @@ function createQQ({ credential: initialCredential = '' } = {}) {
   function qualityLadder(c) {
     return c && c.musickey ? ['M800', 'M500', 'C400'] : ['M500', 'C400'];
   }
+  // mp3Only（电台流模式）：不落 C400(m4a)——流内不能切换编码格式；全挂走既有 vip/unavailable 语义
+  function qualityLadderMp3(c) {
+    return c && c.musickey ? ['M800', 'M500'] : ['M500'];
+  }
 
   function extOf(q) {
     return q === 'C400' || q === 'C600' ? '.m4a' : '.mp3';
   }
 
-  async function songUrl(id) {
+  async function songUrl(id, opts = {}) {
     const c = cred();
     let sawVip = false;
-    for (const q of qualityLadder(c)) {
+    const ladder = opts.mp3Only ? qualityLadderMp3(c) : qualityLadder(c);
+    for (const q of ladder) {
       const data = await musicu('music.vkey.GetVkey', 'UrlGetVkey', {
         guid: GUID,
         songmid: [id],

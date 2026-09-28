@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0d0f14" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="manifest.json" />
   <title>点歌台 · 手机播放</title>
   <link rel="stylesheet" href="css/phone.css" />
 </head>
@@ -47,8 +48,10 @@
 
   <main id="stage">
     <div id="topbar">
+      <button id="modeToggle" class="chip" title="电台模式：退后台/锁屏照常播放；普通模式：可拖进度条">📻 电台</button>
       <span id="modeTag" class="chip">顺序</span>
       <span id="status">连接中…</span>
+      <button id="retakeSmall" class="chip hidden">🖥 抢回</button>
     </div>
     <div id="cover"><div class="hole" id="coverEmoji">💿</div></div>
     <div id="nowTitle">还没有歌，去点一首吧</div>
@@ -69,6 +72,7 @@
     <label id="wakeLabel"><input type="checkbox" id="wakeCb" /> 保持亮屏</label>
   </nav>
   <p id="wakeHint" class="hidden">此浏览器不支持保持亮屏（iPhone 请开系统屏幕常亮或插电）</p>
+  <p id="romHint" class="hidden"><span class="dim">安卓若后台被杀：本页「添加到主屏幕」+ 电池设置放行后台</span> <button id="romHintOk" class="chip">知道了</button></p>
 
   <script src="js/phone-player.js"></script>
 </body>

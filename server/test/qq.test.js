@@ -91,6 +91,36 @@ test('songUrl 登录后：请求带 Cookie 且 g_tk 按 musickey 计算，音质
   });
 });
 
+test('songUrl mp3Only（电台流）：阶梯不落 C400(m4a)，全挂仍报 vip', async () => {
+  const ladder = [];
+  await withFetch(async (n, url, opts) => {
+    if (url.includes('musicu.fcg')) {
+      const body = JSON.parse(opts.body);
+      ladder.push(body.req_0.param.filename[0].slice(0, 4));
+      return mockResponse({ body: JSON.stringify({ code: 0, req_0: { code: 0, data: { midurlinfo: [{ purl: '', result: 104003 }] } } }) });
+    }
+    return mockResponse({ body: '{}' });
+  }, async () => {
+    const q = createQQ({ credential: JSON.stringify({ musicid: 123, musickey: 'MK' }) });
+    assert.deepEqual(await q.songUrl('abc', { mp3Only: true }), { error: 'vip' });
+    assert.deepEqual(ladder, ['M800', 'M500']); // 流内不能切编码：无 C400
+  });
+  // 未登录：mp3Only 阶梯只有 M500
+  const ladder2 = [];
+  await withFetch(async (n, url, opts) => {
+    if (url.includes('musicu.fcg')) {
+      const body = JSON.parse(opts.body);
+      ladder2.push(body.req_0.param.filename[0].slice(0, 4));
+      return mockResponse({ body: JSON.stringify({ code: 0, req_0: { code: 0, data: { midurlinfo: [{ purl: '', result: 104003 }] } } }) });
+    }
+    return mockResponse({ body: '{}' });
+  }, async () => {
+    const q = createQQ();
+    assert.deepEqual(await q.songUrl('abc', { mp3Only: true }), { error: 'vip' });
+    assert.deepEqual(ladder2, ['M500']);
+  });
+});
+
 test('lyric：base64 解码', async () => {
   const b64 = Buffer.from('[00:00.00]歌词', 'utf-8').toString('base64');
   await withFetch(async () => mockResponse({ body: JSON.stringify({ code: 0, lyric: b64 }) }), async () => {

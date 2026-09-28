@@ -13,8 +13,8 @@ function createProviders({ neteaseApi, realIP = '', initialNeteaseCookie = '', i
     return providers[provider] || providers.netease;
   }
 
-  function resolveUrl(song) {
-    return get(song && song.provider).songUrl(song.song_id);
+  function resolveUrl(song, opts = {}) {
+    return get(song && song.provider).songUrl(song.song_id, opts);
   }
 
   return { netease, qq, get, resolveUrl };

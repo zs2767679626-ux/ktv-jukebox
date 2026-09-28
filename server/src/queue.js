@@ -14,6 +14,7 @@ function createJukebox(deps) {
     broadcast,    // () => void
     history,      // { add(song) => id, update(id, fields), listPlayed(limit), setSetting(k, v) }
     initialMode = 'order', // 初始播放模式；非法值回落 order
+    isStreamPlayerActive = () => false, // 当前播放端是否电台流（决定 mp3Only 解析）
     now = () => Date.now(),
     toast = () => {},   // (msg) => void：自动跳过时向网页端提示；默认 no-op 兼容既有测试
   } = deps;
@@ -82,7 +83,7 @@ function createJukebox(deps) {
     item.started_at = now();
     history.update(item.historyId, { status: 'playing', started_at: item.started_at });
     broadcast();
-    const resolved = await resolveUrl(item.song).catch(() => ({ error: 'unavailable' }));
+    const resolved = await resolveUrl(item.song, { mp3Only: isStreamPlayerActive() }).catch(() => ({ error: 'unavailable' }));
     if (state.current !== item) return; // 解析期间已被顶替（切歌等），结果作废
     if (resolved.error) {
       finishCurrent('skipped', resolved.error === 'vip' ? '版权受限' : '无法获取播放地址');
@@ -170,9 +171,16 @@ function createJukebox(deps) {
       return;
     }
     if (state.current.url) {                       // URL 已解析：重发给新播放端
-      state.current.started_at = now();            // 进度/歌词从新起点算
-      history.update(state.current.historyId, { started_at: state.current.started_at });
-      send({ action: 'play', url: state.current.url, song: state.current.song,
+      const item = state.current;
+      if (isStreamPlayerActive()) {
+        // 电台流只收 mp3：缓存 URL 可能是普通播放端解析的 m4a（QQ C400），接管时必须重新解析。
+        // playItem 内部以 mp3Only 解析、重置 started_at、失败自动跳过（finishCurrent+toast+playNext(false)）
+        playItem(item).then(() => { if (state.paused) send({ action: 'pause' }); });
+        return;
+      }
+      item.started_at = now();                     // 进度/歌词从新起点算
+      history.update(item.historyId, { started_at: item.started_at });
+      send({ action: 'play', url: item.url, song: item.song,
              volume: state.volume, muted: state.muted });
       if (state.paused) send({ action: 'pause' }); // 保住暂停语义
     }
@@ -203,8 +211,15 @@ function createJukebox(deps) {
       // 音频设备掉线时不自动续播（音箱没了，播下去也是漏音），恢复后由播放端重连或手动点歌触发
       // 失败路径同样不接播历史：回填只在正常播完/切歌时发生
       if (detail.reason !== '音频设备掉线') playNext(false);
+    } else if (event === 'started') {
+      // 播放端真实起播点（mpv 加载完成 / 流端首块字节 / 恢复后重头播）：
+      // 以此刻为准重置进度起点，进度/歌词从真实起播点计算（对所有播放端都更准）
+      if (state.current) {
+        state.current.started_at = now();
+        history.update(state.current.historyId, { started_at: state.current.started_at });
+        broadcast();
+      }
     }
-    // 'started' 由播放端在上报时自带，服务端无需处理
   }
 
   return {

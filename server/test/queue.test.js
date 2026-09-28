@@ -27,8 +27,9 @@ function setup(overrides = {}) {
     broadcast: () => events.push(['state', j.getState()]),
     toast: (msg) => events.push(['toast', msg]),
     history,
-    now: () => 1700000000000,
+    now: overrides.now || (() => 1700000000000),
     initialMode: overrides.initialMode,
+    isStreamPlayerActive: overrides.isStreamPlayerActive || (() => false),
   });
   return { j, events, history, settings };
 }
@@ -408,4 +409,56 @@ test('列表循环：播放错误跳过不回填历史，安静停下', async ()
   assert.equal(j.getState().current, null); // 失败就安静停下，不接播老歌
   assert.equal(listCalls, 0);
   assert.equal(history.records[0].status, 'skipped');
+});
+
+test('player_event started：以真实起播点重置 started_at（电台流首块/恢复重头播）', async () => {
+  let t = 1700000000000;
+  const { j, history } = setup({ now: () => t });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush();
+  assert.equal(j.getState().current.started_at, 1700000000000); // 起播指令时的起点
+  t = 1700000005000; // 真实起播发生在 5 秒后（流首块/播放器加载完成）
+  j.playerEvent('started');
+  assert.equal(j.getState().current.started_at, 1700000005000);
+  assert.equal(history.records[0].updates.at(-1).started_at, 1700000005000);
+});
+
+test('流播放端在位时以 mp3Only 解析（QQ 不落 C400/m4a）', async () => {
+  let optsSeen = null;
+  const { j } = setup({
+    isStreamPlayerActive: () => true,
+    resolveUrl: async (song, opts) => { optsSeen = opts; return { url: 'http://example.com/a.mp3' }; },
+  });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush();
+  assert.deepEqual(optsSeen, { mp3Only: true });
+});
+
+test('流播放端接管：重解析当前歌（缓存 URL 可能是 m4a），暂停语义保住', async () => {
+  let streamActive = false;
+  const urls = [];
+  const { j, events } = setup({
+    isStreamPlayerActive: () => streamActive,
+    resolveUrl: async (song, opts) => { urls.push(opts); return { url: 'http://example.com/' + urls.length + '.mp3' }; },
+  });
+  j.playerHello(); // 普通端先上线
+  j.addToQueue(song('A'));
+  await flush(); // 普通端解析完成、play 已发
+  assert.deepEqual(urls[0], { mp3Only: false });
+  events.length = 0;
+  streamActive = true; // 电台流接管
+  j.playerHello();
+  await flush();
+  assert.deepEqual(urls[1], { mp3Only: true }); // 不信任缓存 URL，重新解析
+  const plays = events.filter((e) => e[0] === 'player' && e[1].action === 'play');
+  assert.equal(plays.length, 1);
+  assert.equal(plays[0][1].url, 'http://example.com/2.mp3');
+  // 暂停状态下被流端接管：play 之后补发 pause
+  j.pause();
+  events.length = 0;
+  j.playerHello();
+  await flush();
+  assert.deepEqual(events.filter((e) => e[0] === 'player').map((e) => e[1].action), ['volume', 'mute', 'play', 'pause']);
 });
