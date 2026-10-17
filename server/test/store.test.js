@@ -68,7 +68,7 @@ test('list(limit) 截断条数', () => {
 
 test('listPlayed 只回 played、按 id 升序、受 limit 限制', () => {
   const store = createStore(tempDb());
-  const a = store.add({ text: 'A' });
+  const a = store.add({ text: 'A', pic: 'http://p/a.jpg' });
   const b = store.add({ text: 'B' });
   const c = store.add({ text: 'C' });
   store.update(a, { status: 'played' });
@@ -78,6 +78,18 @@ test('listPlayed 只回 played、按 id 升序、受 limit 限制', () => {
   assert.deepEqual(rows.map((r) => r.text), ['A', 'C']); // 升序：先播的在前
   assert.equal(store.listPlayed(1).length, 1); // limit 生效
   assert.equal(store.listPlayed(1)[0].text, 'C'); // limit 截最近播过（窗口语义）
+  store.close();
+});
+
+test('add 保存并读回 pic（列表循环回填封面用）', () => {
+  const store = createStore(tempDb());
+  const id = store.add({ text: 'A', pic: 'http://p/a.jpg' });
+  store.update(id, { status: 'played' });
+  const rows = store.listPlayed();
+  assert.equal(rows[0].pic, 'http://p/a.jpg');
+  const noPic = store.add({ text: 'B' }); // 老数据/无封面：pic 为 null，不炸
+  store.update(noPic, { status: 'played' });
+  assert.equal(store.listPlayed(1)[0].pic, null);
   store.close();
 });
 

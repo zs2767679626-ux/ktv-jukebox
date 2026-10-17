@@ -32,6 +32,8 @@ function createJukebox(deps) {
   let seq = 0;
   const nextId = () => 'q' + (++seq) + Math.random().toString(36).slice(2, 6);
 
+  let pausedAt = null; // 暂停起点：恢复时把暂停时长从 started_at 平移掉，进度停在断点
+
   function getState() {
     return {
       current: state.current && {
@@ -81,6 +83,7 @@ function createJukebox(deps) {
   async function playItem(item) {
     state.current = item;
     item.started_at = now();
+    pausedAt = null; // 新歌新起点：上一首歌的暂停窗口作废
     history.update(item.historyId, { status: 'playing', started_at: item.started_at });
     broadcast();
     const resolved = await resolveUrl(item.song, { mp3Only: isStreamPlayerActive() }).catch(() => ({ error: 'unavailable' }));
@@ -115,7 +118,7 @@ function createJukebox(deps) {
   function refillQueue() {
     for (const row of history.listPlayed(100)) {
       const s = {
-        song_id: row.song_id, title: row.title, artist: row.artist, album: row.album,
+        song_id: row.song_id, title: row.title, artist: row.artist, album: row.album, pic: row.pic,
         text: row.text, duration_ms: row.duration_ms, fee: row.fee, provider: row.provider,
       };
       state.queue.push({ id: nextId(), song: s, historyId: history.add(s) });
@@ -139,11 +142,36 @@ function createJukebox(deps) {
   }
 
   function pause() {
-    if (state.current) { state.paused = true; send({ action: 'pause' }); broadcast(); }
+    if (state.current) { state.paused = true; pausedAt = now(); send({ action: 'pause' }); broadcast(); }
   }
 
   function resume() {
-    if (state.current) { state.paused = false; send({ action: 'resume' }); broadcast(); }
+    if (state.current) {
+      state.paused = false;
+      // 冻结期不计入播放进度：started_at 平移掉暂停时长，恢复后进度从断点继续
+      if (pausedAt != null) {
+        state.current.started_at += now() - pausedAt;
+        pausedAt = null;
+      }
+      send({ action: 'resume' }); broadcast();
+    }
+  }
+
+  // 流端冻结/解冻（断线宽限期专用）：与 pause/resume 同语义，但不向播放端发指令。
+  // 喂送状态由流端自管（stream.js），走 send 会误触流端的 resumeSong 整首重播。
+  function freezeStream() {
+    if (state.current) { state.paused = true; pausedAt = now(); broadcast(); }
+  }
+
+  function resumeStream() {
+    if (state.current) {
+      state.paused = false;
+      if (pausedAt != null) {
+        state.current.started_at += now() - pausedAt;
+        pausedAt = null;
+      }
+      broadcast();
+    }
   }
 
   function setVolume(v) {
@@ -173,6 +201,12 @@ function createJukebox(deps) {
     if (state.current.url) {                       // URL 已解析：重发给新播放端
       const item = state.current;
       if (isStreamPlayerActive()) {
+        if (state.paused) {
+          // 冻结中重连：不重播（重播会毁掉断点），只重申暂停语义；恢复时流端从断点续推
+          send({ action: 'pause' });
+          broadcast();
+          return;
+        }
         // 电台流只收 mp3：缓存 URL 可能是普通播放端解析的 m4a（QQ C400），接管时必须重新解析。
         // playItem 内部以 mp3Only 解析、重置 started_at、失败自动跳过（finishCurrent+toast+playNext(false)）
         playItem(item).then(() => { if (state.paused) send({ action: 'pause' }); });
@@ -189,9 +223,10 @@ function createJukebox(deps) {
 
   function playerGone() {
     state.playerOnline = false;
-    if (state.current) {
-      finishCurrent('skipped', '播放端断线');
-    }
+    // 掉线不跳歌（2026-10-12 用户要求）：current 与队列原样保留。手机切后台/网络瞬断
+    // 会反复掉线，若每次都跳过当前歌，队列会被一首首吃光。重连走 playerHello 续播：
+    // 流端宽限内断点续播、超时后重解析重播；桌面端重发 play。版权失败仍在解析路径跳过。
+    toast('播放端掉线，歌曲已保留，重连后继续播放');
     broadcast();
   }
 
@@ -216,6 +251,7 @@ function createJukebox(deps) {
       // 以此刻为准重置进度起点，进度/歌词从真实起播点计算（对所有播放端都更准）
       if (state.current) {
         state.current.started_at = now();
+        pausedAt = null; // 起播点重置：旧暂停窗口作废
         history.update(state.current.historyId, { started_at: state.current.started_at });
         broadcast();
       }
@@ -225,6 +261,7 @@ function createJukebox(deps) {
   return {
     getState, addToQueue, topQueue, removeQueue,
     setMode, skip, pause, resume, setVolume, toggleMute,
+    freezeStream, resumeStream,
     playerHello, playerGone, playerEvent, playNext,
   };
 }

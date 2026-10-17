@@ -1,25 +1,22 @@
-// 手机播放端，两种模式：
-// - 电台模式（默认）：audio 播服务器 /stream 连续流（服务器把队列拼成一条不断流的音频）。
-//   退后台/锁屏不需要收任何指令，音乐自然不断——iOS/安卓通吃。进度为估算值。
-// - 普通模式：浏览器充当官方播放端（HTML5 Audio），蓝牙/耳机出声，电脑免外放。
-//   协议与 player/client.py 完全一致：player_hello 注册 → 收 player_cmd → 回 player_event。
-//   进度精确、可拖进度条，但退后台会被系统冻结断线。
-// 两种模式都另开一条「网页身份」连接：收 state 广播（队列/模式）+ 发控制指令（暂停/切歌）。
+// 手机播放端（2026-10-05 起永久锁定电台模式，普通模式已移除）：
+// audio 播服务器 /stream 连续流（服务器把队列拼成一条不断流的音频，静音垫底）。
+// 退后台/锁屏不需要收任何指令，音乐自然不断——iOS/安卓通吃。进度为估算值。
+// 用法：扫码 → 轻触一下解锁 → 纯环境音箱。其他手机点歌/切歌/暂停，本机自动跟随，无需再操作。
+// 另开一条「网页身份」连接：收 state 广播（歌单/播放状态）+ 发控制指令（暂停/切歌）。
+// 出声闸门（2026-10-06）：本机未真实出声（自动播放被拦/缓冲卡顿/声音在电脑端）时，
+// 进度与唱片动画一律冻结；自动播放被拦会立即发暂停冻结服务器，'playing' 出声后才解冻——
+// 杜绝「静音假播」（界面在走、音箱无声）。
 (() => {
   'use strict';
   const TOKEN_KEY = 'ktv_phone_token';
-  const WAKELOCK_KEY = 'ktv_phone_wakelock';
-  const MODE_KEY = 'ktv_phone_mode';       // 'radio' | 'normal'
   const ROM_HINT_KEY = 'ktv_rom_hint_seen';
-  const LOAD_GRACE_MS = 10000; // 普通模式加载缓冲期：与 mpv 端一致，超时才算加载失败
-  const STREAM_RETRY_MAX_MS = 10000; // 电台模式重连退避上限
-  const STREAM_STALL_MS = 15000;     // 电台模式：连续无数据超过此时长才重连（歌间间隙勿误伤）
+  const STREAM_RETRY_MAX_MS = 10000; // 重连退避上限
+  const STREAM_STALL_MS = 15000;     // 连续无数据超过此时长才重连（歌间间隙勿误伤）
 
   const $ = (id) => document.getElementById(id);
   const audio = new Audio();
   audio.preload = 'auto';
 
-  const mode = localStorage.getItem(MODE_KEY) === 'normal' ? 'normal' : 'radio';
   let token = localStorage.getItem(TOKEN_KEY) || '';
   // 二维码直带口令：电脑 IP 变动会让手机把新地址当全新网站（localStorage 随 origin 失效），
   // 从 URL 取口令即恢复「扫码即播放端」；取完立刻清掉地址栏参数，防历史记录/截图泄露
@@ -29,66 +26,22 @@
     token = urlToken;
     history.replaceState(null, '', location.pathname);
   }
-  let playerWs = null;
   let stateWs = null;
-  let stoppedByTakeover = false; // 被电脑端接管：不自动抢回，等用户点按钮
-  let unlockDone = false;        // 用户已手动点过「开始」，浏览器放行自动播放
-  let pausedByServer = false;    // 本次暂停是否来自服务器指令（否则视为被别的 App 打断）
-  let currentUrl = null;         // 普通模式：当前歌地址
-  let startedSent = false;
-  let erroredSent = false;
-  let startTimer = null;
-  let playerRetry = 0;
-  let helloTimer = null;
-  let wakeLock = null;
+  let streamAttached = false;    // audio 已指向 /stream
+  let streamRetry = 0;           // 重连退避计数
+  let streamTimer = null;        // 重连定时器
+  let stallTimer = null;         // stall 看门狗
+  let unlockHandler = null;      // 解锁层整屏点击监听（一次性）
+  let interrupted = false;       // 被别的 App 抢声音：已发服务器暂停冻结断点
+  let pausedBeforeInterrupt = false; // 打断发生时服务器本来就暂停：恢复时不代用户解冻
   let lastState = null;
-  let serverOffset = 0;          // 电台：servertime 与本地时钟偏移
-  let pausedProgress = null;     // 电台：暂停时冻结的估算进度
-  let streamRetry = 0;           // 电台：重连退避计数
-  let streamTimer = null;        // 电台：重连定时器
-  let streamAttached = false;    // 电台：audio 已指向 /stream
-  let stallTimer = null;         // 电台：stall 看门狗
+  let serverOffset = 0;          // servertime 与本地时钟偏移
+  let playingFired = false;      // 本机 <audio> 真实出声（'playing' 事件后置真）
+  let stalled = false;           // 缓冲卡顿（waiting）：只冻结本机显示，不惊动服务器
+  let blockPauseSent = false;    // 自动播放被拦：已发服务器暂停冻结断点
+  let frozenProgress = null;     // 未出声时冻结显示的估算进度（断点）
 
-  // ---------- 连接 ----------
-  function connectPlayer() {
-    clearTimeout(helloTimer);
-    if (stoppedByTakeover) return;
-    if (playerWs && (playerWs.readyState === 0 || playerWs.readyState === 1)) return;
-    setStatus('连接中…');
-    playerWs = new WebSocket(`ws://${location.host}/ws`);
-    playerWs.onopen = () => {
-      playerWs.send(JSON.stringify({ type: 'player_hello', token }));
-      // 口令错误时服务器把连接当「网页身份」，约 30ms 后必收到一条 state 快照。
-      // 口令正确则永远收不到 state——用这个差别判定注册成败。
-      helloTimer = setTimeout(() => {
-        setStatus('已连接 · 等待点歌');
-        playerRetry = 0;
-      }, 500);
-    };
-    playerWs.onmessage = (e) => {
-      let msg;
-      try { msg = JSON.parse(e.data); } catch { return; }
-      if (msg.type === 'state') { failToken(); return; }
-      if (msg.type === 'player_cmd') { clearTimeout(helloTimer); handleCmd(msg.cmd); }
-      if (msg.type === 'player_replaced') {
-        stoppedByTakeover = true;
-        stopAudio();
-        $('takeoverOverlay').classList.remove('hidden');
-        setStatus('播放权被电脑端接管');
-        try { playerWs.close(); } catch {}
-      }
-    };
-    playerWs.onclose = () => {
-      playerWs = null;
-      if (stoppedByTakeover) return;
-      playerRetry += 1;
-      const delay = Math.min(2000 * playerRetry, 10000);
-      setStatus(`连接断开，${Math.round(delay / 1000)} 秒后重连…`);
-      setTimeout(connectPlayer, delay);
-    };
-    playerWs.onerror = () => {};
-  }
-
+  // ---------- 状态连接（网页身份）：收广播、发控制 ----------
   function connectState() {
     if (stateWs && (stateWs.readyState === 0 || stateWs.readyState === 1)) return;
     stateWs = new WebSocket(`ws://${location.host}/ws`);
@@ -105,12 +58,12 @@
   }
 
   function stateSend(obj) {
-    if (stateWs && stateWs.readyState === 1) stateWs.send(JSON.stringify(obj));
+    if (stateWs && stateWs.readyState === 1) { stateWs.send(JSON.stringify(obj)); return true; }
+    return false; // 连接未就绪：出声闸门靠下一条广播补发，不丢指令
   }
 
-  // ---------- 电台模式：连续流 ----------
+  // ---------- 电台流：连续流 ----------
   function startRadio() {
-    if (mode !== 'radio' || !token) return;
     clearTimeout(streamTimer);
     checkStream().then((ok) => { if (ok) attachStream(); });
   }
@@ -122,20 +75,26 @@
     } catch { /* 忽略 */ }
     return true;
   }
-  function attachStream() {
-    if (mode !== 'radio' || !token) return;
+  function attachStream(onBlocked) {
+    if (!token) return;
     clearTimeout(streamTimer);
     clearTimeout(stallTimer);
     streamAttached = true;
+    playingFired = false;  // 换源：旧「出声」状态作废，等新流 'playing' 重新放行
+    stalled = false;
     audio.src = '/stream?token=' + encodeURIComponent(token) + '&ts=' + Date.now();
     audio.load();
     audio.play().catch((err) => {
-      if (err && err.name === 'NotAllowedError') { maybeUnlock(); return; }
+      if (err && err.name === 'NotAllowedError') {
+        (onBlocked || showTapOverlay)();
+        blockGate(); // 未出声先冻结服务器：若已在播立即暂停保住断点（不等下一条广播）
+        return;
+      }
       scheduleStreamRetry();
     });
   }
   function scheduleStreamRetry() {
-    if (mode !== 'radio' || !streamAttached || !token) return;
+    if (!streamAttached || !token) return;
     clearTimeout(streamTimer);
     streamRetry = Math.min(streamRetry + 1, 10);
     const delay = Math.min(1000 * streamRetry, STREAM_RETRY_MAX_MS);
@@ -143,102 +102,59 @@
     streamTimer = setTimeout(startRadio, delay);
   }
 
-  // ---------- 普通模式：播放端协议 ----------
-  function handleCmd(cmd) {
-    if (!cmd || !cmd.action) return;
-    switch (cmd.action) {
-      case 'play':
-        if (cmd.volume !== undefined) audio.volume = cmd.volume / 100;
-        if (cmd.muted !== undefined) audio.muted = cmd.muted;
-        loadAndPlay(cmd.url);
-        break;
-      case 'pause': pausedByServer = true; audio.pause(); break;
-      case 'resume':
-        pausedByServer = false;
-        if (audio.src) audio.play().catch((err) => { if (err && err.name === 'NotAllowedError') maybeUnlock(); });
-        break;
-      case 'volume': audio.volume = (cmd.value || 0) / 100; break;
-      case 'mute': audio.muted = !!cmd.value; break;
-    }
+  // ---------- 待激活层：轻触整屏任意位置即放行自动播放；'playing' 事件里解冻服务器 ----------
+  function showTapOverlay() {
+    $('tapOverlay').classList.remove('hidden');
+    if (unlockHandler) $('tapOverlay').removeEventListener('pointerdown', unlockHandler);
+    unlockHandler = () => {
+      $('tapOverlay').classList.add('hidden');
+      attachStream(); // 手势内换新源重连起播；仍被拦（罕见）会重新亮层
+    };
+    $('tapOverlay').addEventListener('pointerdown', unlockHandler, { once: true });
   }
 
-  function loadAndPlay(url) {
-    currentUrl = url;
-    pausedByServer = false;
-    startedSent = false;
-    erroredSent = false;
-    clearTimeout(startTimer);
-    $('progressBar').style.width = '0%';
-    setStatus('缓冲中…');
-    // 加载缓冲期兜底：取流期间无任何事件，10 秒未起播视为加载失败（对齐 mpv 端行为）
-    startTimer = setTimeout(() => sendError('加载失败'), LOAD_GRACE_MS);
-    audio.src = url;
-    audio.load();
-    audio.play().catch((err) => {
-      if (err && err.name === 'NotAllowedError') { maybeUnlock(); return; }
-      sendError('加载失败');
-    });
-  }
-
-  function stopAudio() {
-    currentUrl = null;
-    clearTimeout(startTimer);
-    $('interruptOverlay').classList.add('hidden');
-    try { audio.pause(); } catch {}
-    audio.removeAttribute('src');
-    audio.load();
-  }
-
-  function sendEvent(event, detail) {
-    if (playerWs && playerWs.readyState === 1) {
-      playerWs.send(JSON.stringify({ type: 'player_event', event, detail }));
-    }
-  }
-  function sendError(reason) {
-    if (erroredSent || !currentUrl) return;
-    erroredSent = true;
-    clearTimeout(startTimer);
-    sendEvent('error', { reason });
-    setStatus('加载失败，切下一首…');
-  }
-
+  // ---------- audio 事件 ----------
   audio.addEventListener('playing', () => {
-    clearTimeout(startTimer);
     clearTimeout(stallTimer);
     clearTimeout(streamTimer);   // 流恢复：取消待定的重连
     streamRetry = 0;
+    stalled = false;
+    playingFired = true;         // 真实出声：进度闸门放行
     $('interruptOverlay').classList.add('hidden');
-    updateCover();
-    if (mode === 'radio') setStatus('正在播放');
-    if (mode !== 'radio') {
-      if (!startedSent && currentUrl) {
-        startedSent = true;
-        sendEvent('started');
-        setStatus('正在播放');
+    if (interrupted) {
+      // 恢复解冻：此时新流已注册（冻结期注册不触发重播），服务器从断点续推
+      interrupted = false;
+      if (!pausedBeforeInterrupt) stateSend({ type: 'resume' });
+      pausedBeforeInterrupt = false;
+    } else if (blockPauseSent) {
+      // 待激活层点击成功：解冻服务器（仅当暂停是我们因自动播放被拦而发的），音乐与界面同步起走
+      if (lastState && lastState.paused) {
+        blockPauseSent = !stateSend({ type: 'resume' }); // 发送失败保旗，出声闸门在下条广播补发
+      } else {
+        blockPauseSent = false; // 服务器已被别人解冻：无需再发
       }
     }
+    updateCover();
+    setStatus('正在播放');
   });
   audio.addEventListener('ended', () => {
-    if (mode === 'radio') { scheduleStreamRetry(); return; } // 服务器关了流：退避重连
-    if (!currentUrl) return;
-    sendEvent('finished');
-    setStatus('已播完');
+    playingFired = false;
+    scheduleStreamRetry(); // 服务器关了流：退避重连
   });
   audio.addEventListener('error', () => {
-    if (mode === 'radio') {
-      // 换源（重连）时旧请求的 error 不触发重试；真正失败时 readyState 归零且无新加载
-      if (audio.readyState < 2 && audio.networkState !== 2) scheduleStreamRetry();
-      return;
-    }
-    sendError('加载失败');
+    playingFired = false;
+    // 换源（重连）时旧请求的 error 不触发重试；真正失败时 readyState 归零且无新加载
+    if (audio.readyState < 2 && audio.networkState !== 2) scheduleStreamRetry();
   });
   audio.addEventListener('waiting', () => {
-    if (mode !== 'radio') return;
-    // 歌间间隙取流会有短暂 waiting；仅连续无数据超过上限才重连
+    // 缓冲卡顿：立刻冻结进度显示（不出声不走进度）；歌间间隙取流会有短暂 waiting，
+    // 仅连续无数据超过上限才重连
+    stalled = true;
+    renderProgress();
     clearTimeout(stallTimer);
     stallTimer = setTimeout(() => scheduleStreamRetry(), STREAM_STALL_MS);
   });
-  audio.addEventListener('canplay', () => clearTimeout(stallTimer));
+  audio.addEventListener('canplay', () => { stalled = false; clearTimeout(stallTimer); });
   audio.addEventListener('timeupdate', renderProgress);
   audio.addEventListener('durationchange', renderProgress);
   audio.addEventListener('play', () => {
@@ -246,19 +162,50 @@
     updateCover();
   });
   audio.addEventListener('pause', () => {
+    // 服务器暂停=流切静音，元素不会停；元素停了=别的 App（网易云等）抢了声音：
+    // 立刻发服务器暂停，冻结播放进度保住断点（全员共享暂停），再亮恢复层
+    playingFired = false;
     updateCover();
-    if (mode === 'radio') {
-      // 电台模式服务器暂停=流切静音，元素不会停；元素停了=别的 App（网易云等）抢了声音
-      if (streamAttached && !stoppedByTakeover) {
-        $('interruptOverlay').classList.remove('hidden');
-      }
+    if (!streamAttached) return;
+    if (!interrupted) {
+      interrupted = true;
+      pausedBeforeInterrupt = !!(lastState && lastState.paused);
+      if (!pausedBeforeInterrupt) stateSend({ type: 'pause' });
+    }
+    $('interruptOverlay').classList.remove('hidden');
+  });
+
+  // ---------- 出声闸门 ----------
+  // 本机是否真实出声：元素在播 + 没卡顿 + 声音没被电脑端接管
+  function isSoundOn() {
+    if (!streamAttached || !playingFired || audio.paused || stalled) return false;
+    const st = lastState;
+    if (!st) return false;
+    return !!(st.streamActive || !st.playerOnline);
+  }
+
+  // 服务器已在播但本机没出声（自动播放被拦）→ 立即发暂停冻结服务器断点 + 亮「待激活」层，
+  // 出声('playing')后自动解冻。缓冲卡顿（元素仍在播）只冻结本机显示不惊动服务器；
+  // 声音在电脑端走接管横幅；被别的 App 打断走 interrupt 路径，均不在此处理。
+  function blockGate() {
+    const st = lastState;
+    if (!st || !streamAttached || interrupted || !st.streamActive) return;
+    if (!st.current) return;
+    if (isSoundOn()) {
+      // 已真实出声但服务器仍停在「待激活暂停」：补发解冻（防首次发送失败）
+      if (blockPauseSent && st.paused) blockPauseSent = !stateSend({ type: 'resume' });
+      else if (blockPauseSent && !st.paused) blockPauseSent = false; // 已被别人解冻
       return;
     }
-    // 不是服务器指令、也没自然播完：手机别的 App（网易云等）抢了声音，提示用户恢复
-    if (currentUrl && !audio.ended && !pausedByServer && !stoppedByTakeover) {
-      $('interruptOverlay').classList.remove('hidden');
+    if (!audio.paused) return; // 缓冲卡顿（元素仍在播）：只冻结显示，不惊动服务器
+    if (!st.paused) {
+      // 服务器还在走但本机无声：立即冻结（pause 幂等；发送失败下条广播重发）
+      blockPauseSent = true;
+      stateSend({ type: 'pause' });
     }
-  });
+    setStatus('🔊 点击屏幕激活音箱');
+    showTapOverlay();
+  }
 
   // ---------- 界面 ----------
   function renderState(st) {
@@ -286,62 +233,54 @@
     } else {
       nextBox.classList.add('hidden');
     }
-    $('modeTag').textContent = { order: '顺序', single: '单曲循环', list: '列表循环' }[st.mode] || '顺序';
+    // 音量/静音随服务器状态（全员共享）
+    audio.volume = (st.volume ?? 60) / 100;
+    audio.muted = !!st.muted;
+    // 接管横幅：流端不在播放交椅上但音乐在播 → 声音在电脑端（强提醒，点横幅抢回手机音箱）
+    const taken = !st.streamActive && st.playerOnline && !!cur;
+    $('hijackBanner').classList.toggle('hidden', !taken);
+    if (taken) setStatus('🔇 声音在电脑端');
     // 控制按钮（经网页身份连接下发，全员共享控制权）
     $('pauseBtn').disabled = !cur;
     if (cur) $('pauseBtn').textContent = st.paused ? '▶' : '⏸';
     $('skipBtn').disabled = !(cur || (st.queue && st.queue.length));
-    if (mode === 'radio') {
-      audio.volume = (st.volume ?? 60) / 100;
-      audio.muted = !!st.muted;
-      // 接管提示：流端不在播放交椅上但音乐在播 → 声音在电脑端，点「抢回」重连夺回
-      const taken = !st.streamActive && st.playerOnline && !!cur;
-      $('retakeSmall').classList.toggle('hidden', !taken);
-      if (taken) setStatus('🔇 声音在电脑端');
-    }
     updateCover();
     renderProgress();
     updateMediaSession();
+    blockGate(); // 出声闸门：服务器在播但本机无声 → 冻结服务器 + 亮待激活层
   }
 
+  // 进度：元素播的是连续流，只能按服务器 started_at + 时钟偏移估算。
+  // 出声闸门：仅「服务器未暂停 + 本机真实出声」时前进；服务器暂停 / 本机被拦未出声 /
+  // 声音在电脑端 / 缓冲卡顿 → 一律冻结在断点——不出声就绝不走进度（杜绝静音假播）。
   function renderProgress() {
-    if (mode === 'radio') { renderRadioProgress(); return; }
-    const t = audio.currentTime || 0;
-    const durMs = lastState && lastState.current && lastState.current.song.duration_ms;
-    const d = audio.duration || (durMs ? durMs / 1000 : 0);
-    $('tCur').textContent = fmt(t);
-    $('tDur').textContent = d ? fmt(d) : '--:--';
-    $('progressBar').style.width = d ? Math.min(100, (t / d) * 100) + '%' : '0%';
-  }
-
-  // 电台模式进度：元素播的是连续流，只能按服务器 started_at + 时钟偏移估算
-  function renderRadioProgress() {
     const st = lastState;
     const cur = st && st.current;
     const durMs = cur && cur.song && cur.song.duration_ms;
     const d = durMs ? durMs / 1000 : 0;
     let t = 0;
     if (cur && cur.started_at) {
-      if (st.paused) {
-        if (pausedProgress == null) pausedProgress = Math.min((serverNow() - cur.started_at) / 1000, d || Infinity);
-        t = pausedProgress;
-      } else {
-        pausedProgress = null;
-        t = Math.min((serverNow() - cur.started_at) / 1000, d || Infinity);
-      }
-    } else {
-      pausedProgress = null;
+      t = Math.min((serverNow() - cur.started_at) / 1000, d || Infinity);
     }
-    $('tCur').textContent = fmt(t);
+    if (!cur) frozenProgress = null;
+    const live = !!(st && cur && cur.started_at) && !st.paused && isSoundOn();
+    if (live) {
+      frozenProgress = t;                          // 出声中：断点随实时值走
+    } else if (frozenProgress == null) {
+      frozenProgress = Math.min(t, d || Infinity); // 首次冻结：定格在 0:00 或当前断点
+    }
+    const show = live ? t : (frozenProgress ?? 0);
+    $('tCur').textContent = fmt(show);
     $('tDur').textContent = d ? fmt(d) : '--:--';
-    $('progressBar').style.width = d ? Math.min(100, (t / d) * 100) + '%' : '0%';
+    $('progressBar').style.width = d ? Math.min(100, (show / d) * 100) + '%' : '0%';
   }
 
   function updateCover() {
-    const playing = mode === 'radio'
-      ? (streamAttached && !audio.paused)
-      : (!!currentUrl && !audio.paused);
-    $('cover').classList.toggle('playing', playing);
+    // 唱片只在真实出声且音乐确实在走时转：暂停/被拦/被接管/卡顿一律冻住，与进度闸门同源
+    const st = lastState;
+    const cur = st && st.current;
+    const live = !!(st && cur && cur.started_at) && !st.paused && isSoundOn();
+    $('cover').classList.toggle('playing', live);
   }
 
   function updateMediaSession() {
@@ -352,13 +291,17 @@
         title: cur.title || cur.text || '',
         artist: cur.artist || '',
         album: cur.album || '',
+        // 锁屏封面：歌对象 pic 字段（providers 归一化输出，状态广播带下来）
+        artwork: cur.pic ? [{ src: cur.pic, sizes: '300x300', type: 'image/jpeg' }] : [],
       });
     }
     try {
-      // 锁屏控制 → 服务器级暂停/切歌（电台模式暂停=流切静音，元素不停，后台安全）
+      // 锁屏控制 → 服务器级暂停/切歌（暂停=流切静音，元素不停，后台安全）
       navigator.mediaSession.setActionHandler('play', () => { if (lastState && lastState.paused) stateSend({ type: 'resume' }); });
       navigator.mediaSession.setActionHandler('pause', () => { if (lastState && !lastState.paused) stateSend({ type: 'pause' }); });
       navigator.mediaSession.setActionHandler('nexttrack', () => stateSend({ type: 'skip' }));
+      // 服务器协议没有「上一首」指令（连续流也无法倒带），显式置 null 隐藏锁屏该按钮
+      navigator.mediaSession.setActionHandler('previoustrack', null);
     } catch {}
   }
 
@@ -373,54 +316,31 @@
     $('tokenErr').textContent = '口令不正确，请重新输入';
     $('tokenInput').value = '';
     $('tokenOverlay').classList.remove('hidden');
-    try { playerWs.close(); } catch {}
-    playerWs = null;
   }
 
-  // ---------- 自动播放解锁 ----------
-  function maybeUnlock() {
-    if (unlockDone) return;
-    $('tapOverlay').classList.remove('hidden');
-    $('tapOk').onclick = () => {
-      unlockDone = true;
-      $('tapOverlay').classList.add('hidden');
-      if (audio.src) {
-        audio.play().catch(() => { unlockDone = false; maybeUnlock(); });
-      } else {
-        // 还没歌时先静音播一段静音片解锁（空数据不触发任何上报）
-        const wasMuted = audio.muted;
-        audio.muted = true;
-        audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-        audio.play().then(() => {
-          audio.pause();
-          audio.removeAttribute('src');
-          audio.load();
-          audio.muted = wasMuted;
-        }).catch(() => { unlockDone = false; maybeUnlock(); });
-      }
-    };
-  }
-
-  // ---------- 保持亮屏（仅普通模式用得上；电台模式熄屏照放） ----------
-  async function setWake(on) {
-    if (!on) {
-      try { if (wakeLock) wakeLock.release(); } catch {}
-      wakeLock = null;
-      return;
-    }
-    if (!('wakeLock' in navigator)) { $('wakeHint').classList.remove('hidden'); return; }
-    try { wakeLock = await navigator.wakeLock.request('screen'); }
-    catch { $('wakeHint').classList.remove('hidden'); }
-  }
+  // ---------- 切回前台自动恢复 ----------
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && $('wakeCb').checked) setWake(true);
+    if (document.visibilityState === 'visible') tryAutoResume();
   });
+
+  // 恢复播放 = 换新源重连（被打断的 stale 流直接 play() 会卡死，必须重新挂流；&ts 防缓存）。
+  // 顺序关键：先挂流（冻结期注册不触发整首重播），'playing' 事件里再解冻服务器（断点续推）
+  function recoverPlayback() {
+    $('interruptOverlay').classList.add('hidden');
+    attachStream();
+  }
+
+  // 别的 App 抢声音会把元素停掉；stale 流直接 play() 会卡死，切回前台直接换新源重连起播，
+  // 被系统手势策略拦住（NotAllowedError）就亮打断层，层上一点即换源恢复；
+  // 服务器解冻在 'playing' 事件里发（挂流成功才解冻，避免断点空跑）
+  function tryAutoResume() {
+    const wasInterrupted = streamAttached && (interrupted || audio.paused) && !!audio.getAttribute('src');
+    if (!wasInterrupted) return;
+    // 打断走打断层；自动播放被拦走待激活层（后台回来没有手势上下文，play() 可能仍被拒）
+    attachStream(interrupted ? () => $('interruptOverlay').classList.remove('hidden') : showTapOverlay);
+  }
 
   // ---------- 事件绑定与启动 ----------
-  $('modeToggle').addEventListener('click', () => {
-    localStorage.setItem(MODE_KEY, mode === 'radio' ? 'normal' : 'radio');
-    location.reload();
-  });
   $('romHintOk').addEventListener('click', () => {
     localStorage.setItem(ROM_HINT_KEY, '1');
     $('romHint').classList.add('hidden');
@@ -431,53 +351,27 @@
     localStorage.setItem(TOKEN_KEY, v);
     token = v;
     $('tokenOverlay').classList.add('hidden');
-    stoppedByTakeover = false;
-    if (mode === 'radio') startRadio();
-    else connectPlayer();
+    startRadio();
   });
-  $('retakeBtn').addEventListener('click', () => {
-    stoppedByTakeover = false;
-    $('takeoverOverlay').classList.add('hidden');
-    if (mode === 'radio') attachStream(); // 重连即重新注册，夺回播放权
-    else connectPlayer();
-  });
-  $('retakeSmall').addEventListener('click', () => {
-    attachStream(); // 与 retakeBtn 同效（电台模式顶栏入口）
-  });
-  $('resumeBtn').addEventListener('click', () => {
-    $('interruptOverlay').classList.add('hidden');
-    if (audio.src) audio.play().catch(() => {});
-  });
+  $('hijackBanner').addEventListener('pointerdown', () => attachStream()); // 重连即重新注册，夺回播放权
+  // 打断层整层可点（按钮只是视觉提示），一点即换新源重连恢复
+  $('interruptOverlay').addEventListener('pointerdown', () => recoverPlayback());
   $('pauseBtn').addEventListener('click', () => {
     if (!lastState || !lastState.current) return;
     stateSend({ type: lastState.paused ? 'resume' : 'pause' });
   });
   $('skipBtn').addEventListener('click', () => stateSend({ type: 'skip' }));
-  $('wakeCb').addEventListener('change', () => {
-    localStorage.setItem(WAKELOCK_KEY, $('wakeCb').checked ? '1' : '');
-    setWake($('wakeCb').checked);
-  });
 
-  // 电台模式进度每秒心跳（普通模式由 timeupdate 驱动）
-  setInterval(() => { if (mode === 'radio') renderProgress(); }, 1000);
+  // 进度每秒心跳（连续流没有真实 timeupdate 语义，只能定时估算）
+  setInterval(renderProgress, 1000);
 
-  if (mode === 'radio') {
-    $('wakeLabel').classList.add('hidden');
-    $('wakeHint').classList.add('hidden');
-    if (!localStorage.getItem(ROM_HINT_KEY)) $('romHint').classList.remove('hidden');
-  }
-  $('modeToggle').textContent = mode === 'radio' ? '📻 电台' : '🎧 普通';
+  if (!localStorage.getItem(ROM_HINT_KEY)) $('romHint').classList.remove('hidden');
 
   connectState(); // 网页身份先连上，没口令也能看队列
   if (token) {
-    if (mode === 'radio') startRadio();
-    else connectPlayer();
+    startRadio(); // 首载即尝试起播；被自动播放策略拦下就亮「轻触解锁」层
   } else {
     $('tokenOverlay').classList.remove('hidden');
-  }
-  if (mode === 'normal' && localStorage.getItem(WAKELOCK_KEY)) {
-    $('wakeCb').checked = true;
-    setWake(true);
   }
 
   function serverNow() { return Date.now() + serverOffset; }

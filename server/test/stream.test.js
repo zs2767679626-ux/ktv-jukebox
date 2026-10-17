@@ -87,6 +87,7 @@ async function withStream(opts, handler) {
       stallMs: opts.stallMs ?? 20000,
       evictLimit: opts.evictLimit ?? (1 << 20),
       tickCap: opts.tickCap, // undefined → 生产默认
+      graceMs: opts.graceMs ?? 60, // 生产 90s；测试压小加速
     },
   });
   await new Promise((r) => server.listen(0, r));
@@ -199,16 +200,16 @@ test('切歌：下载中的旧上游被 abort，新歌字节到达', async () =>
   });
 });
 
-test('暂停转静音垫底；恢复重解析(mp3Only)从头流 + started_at 重置', async () => {
+test('暂停冻结断点：静音垫底；恢复从断点续推（不重解析、不重置起点）', async () => {
   await withStream({
-    routes: { 'http://A.mp3': music(0x41, 400) }, // 快下载（gap 0），5s 超时内稳起播；resume 还要再下一遍
+    routes: { 'http://A.mp3': music(0x41, 400) }, // 快下载（gap 0），5s 超时内稳起播
   }, async ({ jukebox, resolveCalls, streamCollector }) => {
     const col = streamCollector();
     await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
     jukebox.addToQueue(SONG('A'));
     await waitFor(() => col.buf().includes(0x41), 5000, 'A 起播');
-    jukebox.pause();
-    // 被顶掉/暂停后静音：先等尾部 256 字节转全零（排掉在途音乐块），再验证静音持续垫底
+    jukebox.pause(); // 喂送中暂停 → 冻结断点（喂送状态保留，不再丢弃重来）
+    // 冻结后转静音垫底：先等尾部 256 字节转全零（排掉在途音乐块），再验证静音持续
     await waitFor(() => {
       const b = col.buf();
       return b.length >= 256 && b.subarray(b.length - 256).every((x) => x === 0);
@@ -218,13 +219,39 @@ test('暂停转静音垫底；恢复重解析(mp3Only)从头流 + started_at 重
     await waitFor(() => col.buf().length >= lenAtPause + 256, 5000, '静音持续垫底');
     for (const byte of col.buf().subarray(lenAtPause)) assert.equal(byte, 0);
     await sleep(20);
-    const startedBefore = jukebox.getState().current.started_at;
+    const startedAtPause = jukebox.getState().current.started_at;
+    const resolveCount = resolveCalls.length;
     jukebox.resume();
-    await waitFor(() => col.buf().subarray(col.buf().length - 64).includes(0x41), 5000, '恢复后音乐重来');
-    assert.deepEqual(resolveCalls.at(-1).opts, { mp3Only: true }); // 恢复重解析走 mp3Only
-    assert.ok(jukebox.getState().current.started_at > startedBefore); // started 事件重置进度起点
+    await waitFor(() => col.buf().subarray(col.buf().length - 64).includes(0x41), 5000, '恢复后音乐续推');
+    assert.equal(resolveCalls.length, resolveCount); // 冻结路径不重解析、不从头流
+    assert.ok(jukebox.getState().current.started_at > startedAtPause); // 冻结窗口被平移掉（started_at += 暂停时长），进度停在断点
     assert.equal(jukebox.getState().paused, false);
     col.close();
+  });
+});
+
+test('冻结期重连：恢复不重播，推送指针回拨到播放位置续推', async () => {
+  await withStream({
+    // 4 秒短歌：开播瞬间整首字节已推入在场客户端（推速上限内）；
+    // 冻结期间新客户端重连，若恢复时不回拨指针，新客户端只能等到曲末静音
+    routes: { 'http://A.mp3': music(0x41, 400) },
+  }, async ({ jukebox, resolveCalls, streamCollector }) => {
+    const A = SONG('A'); A.duration_ms = 4000;
+    const col = streamCollector();
+    await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
+    jukebox.addToQueue(A);
+    await waitFor(() => col.buf().includes(0x41), 5000, 'A 起播（整首字节已推完）');
+    jukebox.pause(); // 冻结断点
+    const col2 = streamCollector(); // 冻结期重连：缓冲已丢，注册不触发整首重播
+    await waitFor(() => col2.len() >= 64, 5000, '冻结期新客户端收到静音垫底');
+    for (const byte of col2.buf()) assert.equal(byte, 0);
+    const resolveCount = resolveCalls.length;
+    jukebox.resume();
+    await waitFor(() => col2.buf().includes(0x41), 5000, '恢复后新客户端从断点续收音乐');
+    assert.equal(resolveCalls.length, resolveCount); // 不重解析：断点续推而非整首重播
+    assert.equal(jukebox.getState().paused, false);
+    col.close();
+    col2.close();
   });
 });
 
@@ -246,17 +273,47 @@ test('上游 404：历史记加载失败并自动接播下一首；全挂则安�
   });
 });
 
-test('最后一个流客户端断开：playerGone 语义（当前歌记断线跳过）', async () => {
+test('最后一个流客户端断开：宽限冻结，超时后下线但不跳歌，重连续播当前歌', async () => {
   await withStream({ routes: { 'http://A.mp3': music(0x41) } }, async ({ jukebox, history, streamCollector }) => {
     const col = streamCollector();
     await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
     jukebox.addToQueue(SONG('A'));
     await waitFor(() => col.buf().includes(0x41), 5000, 'A 起播');
     col.close();
-    await waitFor(() => !jukebox.getState().playerOnline, 5000, 'playerGone');
-    assert.equal(jukebox.getState().current, null);
-    assert.equal(history.records[0].status, 'skipped');
-    assert.equal(history.records[0].updates.at(-1).reason, '播放端断线');
+    await waitFor(() => jukebox.getState().paused === true, 2000, '断线即冻结（暂停语义）');
+    assert.ok(jukebox.getState().current, '宽限期内不跳歌');
+    assert.equal(jukebox.getState().playerOnline, true, '宽限期内播放交椅保留');
+    await waitFor(() => !jukebox.getState().playerOnline, 5000, '宽限超时下线');
+    assert.equal(jukebox.getState().current.song.title, 'A', '超时也不跳歌');
+    assert.equal(jukebox.getState().paused, false, '下线后不残留暂停');
+    assert.equal(history.records[0].status, 'playing', '历史不记断线跳过');
+    const col2 = streamCollector(); // 重连：重解析续播当前歌
+    await waitFor(() => col2.buf().includes(0x41), 5000, '重连后当前歌 A 续播');
+    assert.equal(jukebox.getState().current.song.title, 'A');
+    assert.equal(jukebox.getState().playerOnline, true);
+    col2.close();
+  });
+});
+
+test('断线宽限期：客户端在宽限内回来，从断点续播（不重解析、进度平移、不跳歌）', async () => {
+  await withStream({ routes: { 'http://A.mp3': music(0x41) } }, async ({ jukebox, history, resolveCalls, streamCollector }) => {
+    const col = streamCollector();
+    await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
+    jukebox.addToQueue(SONG('A'));
+    await waitFor(() => col.buf().includes(0x41), 5000, 'A 起播');
+    col.close(); // 手机切后台：断线
+    await waitFor(() => jukebox.getState().paused === true, 2000, '宽限冻结');
+    const startedAtFreeze = jukebox.getState().current.started_at;
+    const resolveCount = resolveCalls.length;
+    const col2 = streamCollector(); // 宽限内回来
+    await waitFor(() => col2.buf().includes(0x41), 5000, '续播：新客户端收到音乐');
+    assert.equal(jukebox.getState().paused, false, '自动解冻');
+    assert.equal(jukebox.getState().current.song.title, 'A', '不跳歌');
+    assert.equal(jukebox.getState().playerOnline, true, '交椅仍在');
+    assert.equal(resolveCalls.length, resolveCount, '不重解析（断点续推而非整首重播）');
+    assert.ok(jukebox.getState().current.started_at > startedAtFreeze, '进度平移（冻结窗口不计入）');
+    assert.equal(history.records[0].status, 'playing', '历史仍为播放中');
+    col2.close();
   });
 });
 
@@ -279,7 +336,7 @@ test('桌面播放端接入：流被顶替转静音，下载中的上游被 abor
   });
 });
 
-test('桌面端断开：流端自动抢回（reclaim）并接播下一首', async () => {
+test('桌面端断开：流端自动抢回（reclaim）续播当前歌，不跳下一首', async () => {
   await withStream({
     routes: { 'http://A.mp3': music(0x41, 800), 'http://B.mp3': music(0x42) },
   }, async ({ jukebox, history, wsClient, streamCollector }) => {
@@ -295,12 +352,13 @@ test('桌面端断开：流端自动抢回（reclaim）并接播下一首', asyn
       return b.length >= 256 && b.subarray(b.length - 256).every((x) => x === 0);
     }, 5000, '被顶替转静音');
     const lenBefore = col.buf().length;
-    desktop.close(); // 桌面断开 → A 记断线 → reclaim 抢回 → playerHello → playNext 接播 B
-    await waitFor(() => col.buf().subarray(lenBefore).includes(0x42), 5000, '抢回后 B 起播');
-    assert.equal(jukebox.getState().current.song.title, 'B');
+    desktop.close(); // 桌面断开 → 不跳歌 → reclaim 抢回 → playerHello → 重解析续播当前歌 A
+    await waitFor(() => col.buf().subarray(lenBefore).includes(0x41), 5000, '抢回后当前歌 A 续播');
+    assert.equal(jukebox.getState().current.song.title, 'A');
     assert.equal(jukebox.getState().playerOnline, true);
-    assert.equal(history.records[0].status, 'skipped');
-    assert.equal(history.records[0].updates.at(-1).reason, '播放端断线');
+    assert.equal(history.records[0].status, 'playing');
+    assert.equal(history.records[1].status, 'requested'); // B 不动，仍在队列
+    assert.equal(jukebox.getState().queue.length, 1);
     col.close();
   });
 });

@@ -7,7 +7,7 @@ function createStore(dbPath) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      song_id TEXT, title TEXT, artist TEXT, album TEXT, text TEXT,
+      song_id TEXT, title TEXT, artist TEXT, album TEXT, pic TEXT, text TEXT,
       duration_ms INTEGER, fee INTEGER,
       provider TEXT NOT NULL DEFAULT 'netease',
       status TEXT NOT NULL DEFAULT 'requested',
@@ -21,6 +21,10 @@ function createStore(dbPath) {
   if (!cols.includes('provider')) {
     db.exec(`ALTER TABLE history ADD COLUMN provider TEXT NOT NULL DEFAULT 'netease'`);
   }
+  // 老库迁移：补 pic 列（手机播放端锁屏封面，2026-10-05 上线）
+  if (!cols.includes('pic')) {
+    db.exec(`ALTER TABLE history ADD COLUMN pic TEXT`);
+  }
   // 简单键值表：网易云登录 Cookie 等运行配置（重启保留）
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -29,8 +33,8 @@ function createStore(dbPath) {
     );
   `);
   const addStmt = db.prepare(`
-    INSERT INTO history (song_id,title,artist,album,text,duration_ms,fee,provider,status,requested_at)
-    VALUES (@song_id,@title,@artist,@album,@text,@duration_ms,@fee,@provider,'requested',@requested_at)`);
+    INSERT INTO history (song_id,title,artist,album,pic,text,duration_ms,fee,provider,status,requested_at)
+    VALUES (@song_id,@title,@artist,@album,@pic,@text,@duration_ms,@fee,@provider,'requested',@requested_at)`);
   const updateStmt = db.prepare(`
     UPDATE history SET status=@status, reason=@reason, started_at=@started_at, finished_at=@finished_at
     WHERE id=@id`);
@@ -48,6 +52,7 @@ function createStore(dbPath) {
         title: song.title ?? null,
         artist: song.artist ?? null,
         album: song.album ?? null,
+        pic: song.pic ?? null,
         text: song.text ?? null,
         duration_ms: song.duration_ms ?? null,
         fee: song.fee ?? null,

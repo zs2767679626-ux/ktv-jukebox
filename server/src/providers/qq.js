@@ -147,11 +147,13 @@ function createQQ({ credential: initialCredential = '' } = {}) {
   // 兼容两种结构：搜索/榜单的平铺字段（albumname、pay.payplay），
   // 歌手歌单的嵌套字段（album.name、pay.pay_play）
   function normalize(s) {
+    const albummid = s.albummid || (s.album && s.album.mid) || '';
     return {
       song_id: String(s.songmid || s.mid || s.song_id || ''),
       title: s.songname || s.name || s.title || '',
       artist: (s.singer || []).map((a) => a.name).join('/'),
       album: s.albumname || (s.album && s.album.name) || '',
+      pic: albummid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albummid}.jpg` : '',
       duration_ms: (s.interval || 0) * 1000,
       fee: s.pay ? (s.pay.payplay ?? s.pay.pay_play ?? 0) : 0,
     };

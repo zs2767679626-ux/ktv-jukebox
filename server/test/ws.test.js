@@ -129,8 +129,8 @@ test('播放端 finished → 下一首 play；网页端全部同步收到新 sta
   });
 });
 
-test('播放端断开 → playerOnline:false，当前歌 skipped', async () => {
-  await withRealtime(async ({ ws, nextMsg, history }) => {
+test('播放端断开 → playerOnline:false，当前歌保留（不跳歌）+ 网页端收到保留提示', async () => {
+  await withRealtime(async ({ ws, nextMsg, nextState, nextToast, history }) => {
     const player = await ws();
     player.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
     await sleep(30);
@@ -138,12 +138,14 @@ test('播放端断开 → playerOnline:false，当前歌 skipped', async () => {
     await nextMsg(web); // 排掉连接快照
     web.send(JSON.stringify({ type: 'play_request', song: { text: 'A', song_id: '1', title: 'A', duration_ms: 1000, fee: 0 } }));
     await nextMsg(web);
+    const toastP = nextToast(web);   // playerGone 的 toast 与 state 广播连发：先挂监听再断线
+    const stateP = nextState(web, (s) => !s.playerOnline);
     player.close();
-    const m = await nextMsg(web);
-    assert.equal(m.state.playerOnline, false);
-    assert.equal(m.state.current, null);
-    assert.equal(history.records[0].status, 'skipped');
-    assert.equal(history.records[0].updates.at(-1).reason, '播放端断线');
+    const t = await toastP;
+    assert.ok(t.msg.includes('重连'));
+    const m = await stateP;
+    assert.equal(m.state.current.song.title, 'A'); // 不跳歌
+    assert.equal(history.records[0].status, 'playing'); // 不记断线跳过
     web.close();
   });
 });

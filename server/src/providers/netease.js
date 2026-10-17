@@ -14,6 +14,7 @@ function createNetease(api, opts = {}) {
       title: s.name || '',
       artist: ((s.ar || s.artists || []).map((a) => a.name).join('/')) || '',
       album: (s.al && s.al.name) || (s.album && s.album.name) || '',
+      pic: (s.al && s.al.picUrl) || (s.album && s.album.picUrl) || '',
       duration_ms: s.dt || s.duration || 0,
       fee: s.fee ?? 0,
     };

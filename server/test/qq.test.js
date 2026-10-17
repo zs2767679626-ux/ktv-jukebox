@@ -32,7 +32,7 @@ const MUSICU_RESP = (data, code = 0) => ({
 test('search 归一化：songmid/歌手拼接/时长毫秒/fee', async () => {
   await withFetch(async () => mockResponse({
     body: JSON.stringify({ code: 0, data: { song: { list: [
-      { songmid: '001abc', songname: '七里香', singer: [{ name: '周杰伦' }], albumname: '七里香', interval: 250, pay: { payplay: 1 } },
+      { songmid: '001abc', songname: '七里香', singer: [{ name: '周杰伦' }], albumname: '七里香', albummid: '002xyz', interval: 250, pay: { payplay: 1 } },
     ] } } }),
   }), async (calls) => {
     const q = createQQ();
@@ -43,6 +43,7 @@ test('search 归一化：songmid/歌手拼接/时长毫秒/fee', async () => {
     assert.equal(r[0].title, '七里香');
     assert.equal(r[0].artist, '周杰伦');
     assert.equal(r[0].album, '七里香');
+    assert.equal(r[0].pic, 'https://y.gtimg.cn/music/photo_new/T002R300x300M000002xyz.jpg');
     assert.equal(r[0].duration_ms, 250000);
     assert.equal(r[0].fee, 1);
   });

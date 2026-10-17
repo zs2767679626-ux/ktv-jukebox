@@ -166,20 +166,25 @@ test('置顶把队列项移到队首（不打断当前），删除记录 skipped
   assert.equal(removed.updates.at(-1).reason, '被移除');
 });
 
-test('播放端断线：当前歌记 skipped/播放端断线，重连后播队首', async () => {
-  const { j, history } = setup();
+test('播放端断线：当前歌与队列原样保留（不跳歌），重连续播当前歌', async () => {
+  const { j, history, events } = setup();
   j.playerHello();
   j.addToQueue(song('A'));
   j.addToQueue(song('B'));
   await flush();
   j.playerGone();
-  assert.equal(j.getState().current, null);
+  assert.equal(j.getState().current.song.title, 'A'); // 当前歌不丢
+  assert.equal(j.getState().queue.length, 1);          // 队列不丢
   assert.equal(j.getState().playerOnline, false);
-  assert.equal(history.records[0].status, 'skipped');
-  assert.equal(history.records[0].updates.at(-1).reason, '播放端断线');
-  j.playerHello();
+  assert.equal(history.records[0].status, 'playing');  // 不记断线跳过
+  assert.ok(events.some((e) => e[0] === 'toast'), '网页端收到保留提示');
+  const plays = () => events.filter((e) => e[0] === 'player' && e[1].action === 'play').length;
+  const before = plays();
+  j.playerHello(); // 重连：续播当前歌，不插队
   await flush();
-  assert.equal(j.getState().current.song.title, 'B');
+  assert.equal(j.getState().current.song.title, 'A');
+  assert.equal(j.getState().queue.length, 1);
+  assert.equal(plays(), before + 1);
 });
 
 test('播放错误：历史记 reason 并自动下一首；音频设备掉线则不续播（队列留档）', async () => {
@@ -455,10 +460,31 @@ test('流播放端接管：重解析当前歌（缓存 URL 可能是 m4a），�
   const plays = events.filter((e) => e[0] === 'player' && e[1].action === 'play');
   assert.equal(plays.length, 1);
   assert.equal(plays[0][1].url, 'http://example.com/2.mp3');
-  // 暂停状态下被流端接管：play 之后补发 pause
+  // 暂停状态下被流端接管：不重播（重播会毁掉断点），只重申暂停语义；恢复时流端从断点续推
   j.pause();
   events.length = 0;
   j.playerHello();
   await flush();
-  assert.deepEqual(events.filter((e) => e[0] === 'player').map((e) => e[1].action), ['volume', 'mute', 'play', 'pause']);
+  assert.deepEqual(events.filter((e) => e[0] === 'player').map((e) => e[1].action), ['volume', 'mute', 'pause']);
+  assert.equal(urls.length, 2); // 暂停接管不重新解析（断点还在，无需重取）
+});
+
+test('流端冻结/解冻（断线宽限期）：同暂停语义但不向播放端发指令，进度平移', async () => {
+  let t = 1700000000000;
+  const { j, events } = setup({ now: () => t });
+  j.playerHello();
+  j.addToQueue(song('晴天'));
+  await flush();
+  const cmdCount = () => events.filter((e) => e[0] === 'player').length;
+  const base = cmdCount();
+  t += 5000;
+  j.freezeStream();
+  assert.equal(j.getState().paused, true);
+  assert.equal(cmdCount(), base, '冻结不向播放端发指令');
+  const startedAt = j.getState().current.started_at;
+  t += 30000;
+  j.resumeStream();
+  assert.equal(j.getState().paused, false);
+  assert.equal(cmdCount(), base, '解冻不向播放端发指令');
+  assert.equal(j.getState().current.started_at, startedAt + 30000, '冻结窗口被平移掉');
 });

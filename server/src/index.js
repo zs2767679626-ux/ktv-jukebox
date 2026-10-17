@@ -43,6 +43,7 @@ function createApp({ providers, history, isPlayerToken, webDir, lanUrls, deviceT
     evictLimit: streamOptions.evictLimit,
     silenceIntervalMs: streamOptions.silenceIntervalMs,
     tickCap: streamOptions.tickCap,
+    graceMs: streamOptions.graceMs,
   });
   return { app, server, jukebox, streamer, wss };
 }

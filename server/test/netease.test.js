@@ -7,7 +7,7 @@ function fakeApi(overrides = {}) {
   return {
     search: async () => ({
       body: { result: { songs: [
-        { id: 186016, name: '晴天', ar: [{ name: '周杰伦' }], al: { name: '叶惠美' }, dt: 269000, fee: 0 },
+        { id: 186016, name: '晴天', ar: [{ name: '周杰伦' }], al: { name: '叶惠美', picUrl: 'http://p1/叶惠美.jpg' }, dt: 269000, fee: 0 },
         { id: 2, name: 'VIP歌', ar: [], al: null, dt: 0, fee: 1 },
       ] } },
     }),
@@ -32,8 +32,10 @@ test('search 归一化：title/artist/album/duration/fee', async () => {
   assert.equal(r[0].title, '晴天');
   assert.equal(r[0].artist, '周杰伦');
   assert.equal(r[0].album, '叶惠美');
+  assert.equal(r[0].pic, 'http://p1/叶惠美.jpg');
   assert.equal(r[0].duration_ms, 269000);
   assert.equal(r[1].fee, 1);
+  assert.equal(r[1].pic, ''); // al 为空：封面回落空串，不炸
 });
 
 test('songUrl：404 → error:vip；有 url 正常返回', async () => {

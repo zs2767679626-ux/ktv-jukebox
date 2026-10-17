@@ -42,6 +42,24 @@ button.chip { font: inherit; cursor: pointer; }
   text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* ---------- 接管横幅：声音在电脑端时置顶强提醒，整条可点 ---------- */
+#hijackBanner {
+  position: fixed; left: 0; right: 0; top: calc(40px + env(safe-area-inset-top));
+  z-index: 5;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  margin: 10px 12px 0; padding: 12px 14px;
+  background: linear-gradient(90deg, rgba(245, 176, 66, .22), rgba(245, 176, 66, .08));
+  border: 1px solid var(--gold); border-radius: 12px;
+  color: var(--gold); font-size: 14px; font-weight: 700;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  box-shadow: 0 4px 24px rgba(245, 176, 66, .25);
+  cursor: pointer;
+}
+#hijackBanner .chip {
+  flex-shrink: 0; border: none; color: #1a1206; font-weight: 700;
+  background: var(--gold); padding: 6px 12px;
+}
+
 /* 旋转唱片：外圈渐变转，中心 hole 反向转抵消，emoji 保持正立 */
 #cover {
   width: min(44vw, 200px); height: min(44vw, 200px); border-radius: 50%;
@@ -102,12 +120,6 @@ button.chip { font: inherit; cursor: pointer; }
   padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
 }
 #bottomBar .round { width: 56px; height: 56px; border-radius: 50%; padding: 0; font-size: 20px; }
-#wakeLabel { font-size: 13px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
-#wakeCb { accent-color: var(--accent); width: 18px; height: 18px; }
-#wakeHint {
-  position: fixed; left: 0; right: 0; bottom: calc(70px + env(safe-area-inset-bottom));
-  text-align: center; font-size: 12px; color: var(--gold); margin: 0;
-}
 #romHint {
   position: fixed; left: 0; right: 0; bottom: calc(74px + env(safe-area-inset-bottom));
   display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -116,7 +128,7 @@ button.chip { font: inherit; cursor: pointer; }
 
 /* ---------- 覆盖层 ---------- */
 .overlay {
-  position: fixed; inset: 0; z-index: 10;
+  position: fixed; inset: 0; z-index: 999; /* 最高层：待激活/打断/口令层盖过一切，绝不被遮挡 */
   background: rgba(10, 11, 16, .9);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   display: flex; align-items: flex-start; justify-content: center; padding: 24px;
