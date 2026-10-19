@@ -70,7 +70,8 @@ function createNetease(api, opts = {}) {
     cookie = '';
   }
 
-  // 当前登录态：null = 未登录；否则 { loggedIn, nickname, vipType }
+  // 当前登录态：null = 确定未登录；{ loggedIn, nickname, vipType } = 已登录；
+  // { unknown: true } = 网络故障查不了（凭证可能还在，别误导用户重扫）
   async function loginStatus() {
     if (!cookie) return null;
     try {
@@ -80,7 +81,7 @@ function createNetease(api, opts = {}) {
       const p = d.profile || {};
       return { loggedIn: true, nickname: p.nickname || '', vipType: p.vipType || 0 };
     } catch (e) {
-      return null;
+      return { unknown: true };
     }
   }
 

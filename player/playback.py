@@ -49,19 +49,24 @@ class VirtualPlayer(BasePlayer):
         self.duration = duration
         self.volume = 60
         self.muted = False
+        self.paused = False
         self._end_at = None
 
     async def play(self, url, volume, muted):
         log.info('[virtual] play %s volume=%s muted=%s', url, volume, muted)
         self.volume = int(volume)
         self.muted = bool(muted)
+        # 与 MpvPlayer 同语义：新歌起播清暂停态（mpv 的 pause 跨 loadfile 持久，见 play()）
+        self.paused = False
         self._end_at = time.time() + self.duration
 
     async def pause(self):
         log.info('[virtual] pause')
+        self.paused = True
 
     async def resume(self):
         log.info('[virtual] resume')
+        self.paused = False
 
     async def stop(self):
         log.info('[virtual] stop')
@@ -104,6 +109,10 @@ class MpvPlayer(BasePlayer):
 
     async def play(self, url, volume, muted):
         self.mpv.loadfile(url)
+        # mpv 的 pause 是播放器级属性、跨 loadfile/stop 持久（已用本机 libmpv-2.dll 实测）：
+        # 上一首暂停时切歌/点歌，不重置的话下一首加载后仍是暂停态——播放端照发 started、
+        # 网页显示「正在播放」，实际无声。新歌起播必须显式清暂停。
+        self.mpv.pause = False
         self._loaded = True
         self._load_at = time.time()
         self.mpv.volume = int(volume)

@@ -147,6 +147,81 @@ test('暂停/恢复/静音切换', async () => {
   assert.equal(j.getState().muted, false);
 });
 
+test('URL 解析期间按暂停：解析完成后补发 pause，保住暂停语义', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { j, events } = setup({
+    resolveUrl: async () => { await gate; return { url: 'http://example.com/a.mp3' }; },
+  });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  await flush(); // playItem 卡在解析（QQ 取链阶梯要 1~3 秒，此窗口完全可能按暂停）
+  j.pause();
+  assert.equal(j.getState().paused, true);
+  release();
+  await flush(); await flush();
+  const playerEvs = events.filter((e) => e[0] === 'player');
+  const playIdx = playerEvs.findIndex((e) => e[1].action === 'play');
+  assert.ok(playIdx >= 0, '应发出 play');
+  assert.ok(playerEvs.slice(playIdx + 1).some((e) => e[1].action === 'pause'), 'play 之后应补发 pause');
+  assert.equal(j.getState().paused, true, '暂停语义保持');
+});
+
+test('暂停中切歌：新歌不带暂停出生（旧实现把 stale 暂停传染给后续每首歌）', async () => {
+  const { j, events } = setup();
+  j.playerHello();
+  j.addToQueue(song('A'));
+  j.addToQueue(song('B'));
+  await flush();
+  j.pause();
+  assert.equal(j.getState().paused, true);
+  j.skip();
+  await flush();
+  assert.equal(j.getState().current.song.title, 'B');
+  assert.equal(j.getState().paused, false, '切歌后暂停语义作废：新歌正常出声');
+  // B 的 play 之后不应跟 pause（暂停语义已被 skip 清掉）
+  const playerEvs = events.filter((e) => e[0] === 'player');
+  const playIdx = playerEvs.map((e) => e[1].action).lastIndexOf('play');
+  assert.ok(!playerEvs.slice(playIdx + 1).some((e) => e[1].action === 'pause'), 'B 起播不带 pause');
+  // 新歌自己的暂停/恢复仍正常平移进度（断点不被旧暂停窗口污染）
+  let t = 1700000000000;
+  const { j: j2 } = setup({ now: () => t });
+  j2.playerHello();
+  j2.addToQueue(song('A'));
+  j2.addToQueue(song('B'));
+  await flush();
+  j2.pause();
+  t += 5000;
+  j2.skip();
+  await flush();
+  const startedAt = j2.getState().current.started_at;
+  j2.pause();
+  t += 10000;
+  j2.resume();
+  assert.equal(j2.getState().current.started_at, startedAt + 10000, '恢复只平移本次暂停窗口');
+});
+
+test('暂停中解析失败接播：新歌同样不带暂停出生', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { j } = setup({
+    resolveUrl: async (s) => {
+      if (s.title === 'A') { await gate; return { error: 'unavailable' }; } // A 卡在解析
+      return { url: 'http://example.com/b.mp3' };
+    },
+  });
+  j.playerHello();
+  j.addToQueue(song('A'));
+  j.addToQueue(song('B'));
+  await flush(); // A 仍在解析中
+  j.pause(); // 暂停语义挂在解析中的 A 上
+  assert.equal(j.getState().paused, true);
+  release(); // A 解析失败 → 跳过 → 接播 B
+  await flush(); await flush();
+  assert.equal(j.getState().current.song.title, 'B');
+  assert.equal(j.getState().paused, false, '失败接播的新歌不带暂停出生');
+});
+
 test('置顶把队列项移到队首（不打断当前），删除记录 skipped/被移除', async () => {
   const { j, history } = setup();
   j.playerHello();

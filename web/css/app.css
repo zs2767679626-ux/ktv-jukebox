@@ -154,7 +154,7 @@ body[data-view="queue"] #view-queue { display: block; }
   border-radius: var(--radius); padding: 12px; width: 180px; display: none; z-index: 60;
   box-shadow: 0 6px 24px rgba(0,0,0,.5); }
 .login-panel.show { display: block; }
-.login-panel .account { margin: 0 0 10px; font-size: 13px; color: var(--fg);
+.login-panel .account { margin: 0 0 10px; font-size: 13px; color: var(--text);
   word-break: break-all; }
 .login-panel .btns { display: flex; gap: 8px; justify-content: center; }
 /* 点歌页平台切换（网易云 / QQ音乐） */

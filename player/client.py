@@ -74,9 +74,19 @@ async def receiver(ws, cmdq):
             cmdq.put_nowait(None)
 
 
+FIRST_CMD_TIMEOUT = 10  # hello 后首条播放指令的宽限（秒）
+
+
 async def control_loop(ws, cmdq, player):
+    # 合法播放端 hello 后服务端立刻发 volume/mute（queue.js playerHello 必发）；
+    # token 错时服务端按网页客户端处理，只发 state 广播（receiver 忽略），cmdq 永远为空——
+    # 首条指令加超时：超时断开交给 run() 重连并留日志，避免无声无错地永久挂起。
+    try:
+        cmd = await asyncio.wait_for(cmdq.get(), timeout=FIRST_CMD_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.warning('hello 后 %s 秒未收到播放指令（token 可能错误或已被撤权），断开重试', FIRST_CMD_TIMEOUT)
+        return
     while True:
-        cmd = await cmdq.get()
         if cmd is None:  # 连接断开哨兵：退出会话，交由 run() 5 秒后重连
             return
         if cmd.get('action') == 'play':
@@ -88,6 +98,7 @@ async def control_loop(ws, cmdq, player):
                 return
         else:
             await apply_cmd(player, cmd)
+        cmd = await cmdq.get()
 
 
 async def play_session(ws, cmdq, player):
@@ -112,6 +123,7 @@ async def play_session(ws, cmdq, player):
                 await player.stop()
                 await ws.send(json.dumps({'type': 'player_event', 'event': 'error', 'detail': {'reason': '音频设备掉线'}}))
                 return None
+        pending_play = None
         while not cmdq.empty():
             cmd = cmdq.get_nowait()
             if cmd is None:  # 连接断开哨兵：停播并退出，控制环随后退出会话
@@ -120,7 +132,17 @@ async def play_session(ws, cmdq, player):
             if cmd.get('action') == 'stop':
                 await player.stop()
                 return None
+            if cmd.get('action') == 'play':
+                # 播放中收到新 play（切歌竞态）：apply_cmd 不认识 play 会静默丢弃，
+                # 丢掉后控制环将苦等一个永不重发的指令。先停当前歌，把 play 送回队列，
+                # 本会话结束后由控制环统一处理。
+                await player.stop()
+                pending_play = cmd
+                continue
             await apply_cmd(player, cmd)
+        if pending_play is not None:
+            cmdq.put_nowait(pending_play)  # 排到队尾：控制环随后按序处理
+            return None
 
 
 async def apply_cmd(player, cmd):

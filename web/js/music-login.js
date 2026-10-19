@@ -55,6 +55,10 @@ export function initMusicLogin({ toast }) {
       const vip = vipLabel(p, s.vipType);
       b.textContent = `${cfg(p).icon} ${cfg(p).label}：${s.nickname}${vip ? `（${vip}）` : ''}`;
       b.classList.add('logged-in');
+    } else if (s && s.unknown) {
+      // 服务器查登录态时网络故障：凭证可能还在，别显示「未登录」误导用户重扫
+      b.textContent = `${cfg(p).icon} ${cfg(p).label}登录态未知`;
+      b.classList.remove('logged-in');
     } else {
       b.textContent = `${cfg(p).icon} ${cfg(p).label}未登录`;
       b.classList.remove('logged-in');
@@ -160,8 +164,9 @@ export function initMusicLogin({ toast }) {
         tip.textContent = '二维码已过期，点「刷新二维码」重试';
       }
     } catch (e) {
-      stopPolling(p);
-      modal.querySelector('.qr-tip').textContent = '查询失败：' + e.message;
+      // 网络抖动不停轮询（停了二维码就永远等不到登录，只能手动刷新）；
+      // 800 过期 / 803 成功才停。网络恢复后轮询自然续上。
+      modal.querySelector('.qr-tip').textContent = '网络波动，继续等待扫码…';
     }
   }
 

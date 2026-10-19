@@ -40,6 +40,7 @@
   let stalled = false;           // 缓冲卡顿（waiting）：只冻结本机显示，不惊动服务器
   let blockPauseSent = false;    // 自动播放被拦：已发服务器暂停冻结断点
   let frozenProgress = null;     // 未出声时冻结显示的估算进度（断点）
+  let frozenSongId = null;       // 冻结断点所属的歌：换歌必须作废（断线期间错过 current=null 广播时防跨歌残留）
 
   // ---------- 状态连接（网页身份）：收广播、发控制 ----------
   function connectState() {
@@ -124,7 +125,11 @@
     if (interrupted) {
       // 恢复解冻：此时新流已注册（冻结期注册不触发重播），服务器从断点续推
       interrupted = false;
-      if (!pausedBeforeInterrupt) stateSend({ type: 'resume' });
+      if (!pausedBeforeInterrupt) {
+        // 恢复指令丢失（状态连接恰好断线）时交给出声闸门在下条广播里补发：
+        // 否则服务器永久停在暂停态，本机出声却听不到，只能手动按按钮
+        if (!stateSend({ type: 'resume' })) blockPauseSent = true;
+      }
       pausedBeforeInterrupt = false;
     } else if (blockPauseSent) {
       // 待激活层点击成功：解冻服务器（仅当暂停是我们因自动播放被拦而发的），音乐与界面同步起走
@@ -262,10 +267,12 @@
     if (cur && cur.started_at) {
       t = Math.min((serverNow() - cur.started_at) / 1000, d || Infinity);
     }
-    if (!cur) frozenProgress = null;
+    if (!cur) { frozenProgress = null; frozenSongId = null; }
+    else if (frozenSongId !== cur.song.song_id) { frozenProgress = null; frozenSongId = cur.song.song_id; }
     const live = !!(st && cur && cur.started_at) && !st.paused && isSoundOn();
     if (live) {
       frozenProgress = t;                          // 出声中：断点随实时值走
+      frozenSongId = cur.song.song_id;
     } else if (frozenProgress == null) {
       frozenProgress = Math.min(t, d || Infinity); // 首次冻结：定格在 0:00 或当前断点
     }

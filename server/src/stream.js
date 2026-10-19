@@ -354,7 +354,7 @@ function createStream({
     }
   }
   // 最后一客户端断开：先冻结断点宽限 graceMs——手机切后台/网络瞬断不必判死，
-  // 期间回来无缝续播；超时才 hold + 下线（playerGone 只摘交椅不跳歌：current/队列
+  // 期间回来无缝续播；超时才 hold（playerGone 已在 deactivate 时摘交椅：current/队列
   // 保留，之后新客户端重连经 playerHello 重解析续播当前歌）
   function armGrace() {
     clearTimeout(graceTimer);
@@ -365,7 +365,7 @@ function createStream({
         jukebox.resumeStream(); // 清掉本端设的暂停语义，下一首不带 paused 出生
       }
       hold();
-      clearStreamPlayer(mockSocket); // ws.js 内带 player===mock 守卫；被顶掉时是 no-op
+      clearStreamPlayer(mockSocket); // 宽限起即已摘（deactivate）；此处幂等兜底，被顶掉时是 no-op
     }, graceMs);
     if (graceTimer.unref) graceTimer.unref();
   }
@@ -377,6 +377,10 @@ function createStream({
       jukebox.freezeStream(); // 不发指令：仅 paused + pausedAt，广播让页面显示暂停
       graceFrozen = true;
     }
+    // 宽限起就摘播放交椅（playerGone 只摘交椅不跳歌）：宽限 90 秒内队列知道没有播放端，
+    // 点歌只排队不把音乐喂进零客户端；网页端 streamActive/playerOnline 显示真实离线。
+    // 手机宽限内回来：addClient → activate → playerHello 续播，冻结断点不受影响。
+    clearStreamPlayer(mockSocket);
     armGrace();
   }
   function reclaim() {            // ws.js onPlayerSlotFree：桌面端断开后抢回

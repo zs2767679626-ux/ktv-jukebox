@@ -7,6 +7,8 @@ import { parseLrc, activeIndex } from '../lrc.js';
 // 歌词状态（模块级）
 let lyricLines = [];
 let lyricSongId = null;
+let lyricFailSong = null; // 失败退避：同一首歌 5 秒内不重试（250ms tick 会打成请求风暴）
+let lyricFailAt = 0;
 let lastActive = -1;
 
 export function render(el, ctx) {
@@ -188,22 +190,31 @@ async function loadLyrics(el, ctx) {
   const cur = ctx.state && ctx.state.current;
   const box = el.querySelector('#lyrics');
   if (!cur || !cur.song.song_id) {
-    lyricLines = []; lyricSongId = null; lastActive = -1;
+    lyricLines = []; lyricSongId = null; lyricFailSong = null; lastActive = -1;
     box.innerHTML = '<div class="empty-tip">暂无歌词</div>';
     return;
   }
   if (lyricSongId === cur.song.song_id) return;
-  lyricSongId = cur.song.song_id;
+  // 失败退避：网络抖动的歌每 5 秒重试一次（否则 tick 每次进 loadLyrics 打成请求风暴）
+  if (lyricFailSong === cur.song.song_id && Date.now() - lyricFailAt < 5000) return;
+  const wantId = cur.song.song_id;
+  lyricSongId = wantId; // 加载中占位：tick 不会重复进入
   lyricLines = []; lastActive = -1;
   box.innerHTML = '<div class="empty-tip">歌词加载中…</div>';
   try {
-    const r = await fetch(`/api/lyric?id=${encodeURIComponent(cur.song.song_id)}&provider=${encodeURIComponent(cur.song.provider || '')}`);
+    const r = await fetch(`/api/lyric?id=${encodeURIComponent(wantId)}&provider=${encodeURIComponent(cur.song.provider || '')}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
+    if (lyricSongId !== wantId) return; // 期间歌已切走：旧响应作废，不覆盖新歌歌词
+    lyricFailSong = null;
     lyricLines = parseLrc(data.lrc);
     if (!lyricLines.length) { box.innerHTML = '<div class="empty-tip">纯音乐</div>'; return; }
     box.innerHTML = lyricLines.map((l, i) => `<div class="lyric-line" data-i="${i}">${esc(l.text)}</div>`).join('');
   } catch {
+    if (lyricSongId !== wantId) return; // 失败的是旧歌：别动新歌的界面
+    lyricSongId = null;    // 允许重试（受上面 5 秒退避拦截）
+    lyricFailSong = wantId;
+    lyricFailAt = Date.now();
     box.innerHTML = '<div class="empty-tip">歌词获取失败</div>';
     lyricLines = [];
   }
