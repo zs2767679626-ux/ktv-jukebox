@@ -112,7 +112,10 @@ function bind(el, ctx) {
     $('#q').value = '';
     $('#candidates').classList.remove('show');
   }
-  function hideSub() { $('#subpage').style.display = 'none'; $('#subpage').innerHTML = ''; }
+  function hideSub() {
+    subSeq++; // 子页作废序号：在途的慢响应回来时对照此序号，防止复活已清空的子页/串平台数据
+    $('#subpage').style.display = 'none'; $('#subpage').innerHTML = '';
+  }
   function subhead(title) {
     return `<div class="subhead"><button class="back">← 返回</button><h2>${esc(title)}</h2></div>`;
   }
@@ -128,6 +131,7 @@ function bind(el, ctx) {
   // ===== 搜索（防抖 280ms；input 事件冒泡，委托在 el 上） =====
   let debounce = null;
   let seq = 0;
+  let subSeq = 0; // 子页加载序号：切平台/返回/开新子页都会 +1，慢响应回来对照作废
   el.addEventListener('input', (e) => {
     if (e.target.id !== 'q') return;
     clearTimeout(debounce);
@@ -162,12 +166,14 @@ function bind(el, ctx) {
     $('#candidates').classList.add('show');
   }
 
-  // ===== 子页面 =====
+  // ===== 子页面（所有异步加载带 subSeq 守卫：慢响应回来时若已切平台/返回/开新子页，直接作废） =====
   async function artistList(type) {
+    const mySeq = ++subSeq;
     $('#subpage').style.display = 'block';
     $('#subpage').innerHTML = '<div class="loading">加载中…</div>';
     try {
       const data = await getJSON(`/api/artists?type=${type}&provider=${provider}`);
+      if (mySeq !== subSeq) return;
       const list = data.artists || [];
       // QQ 歌手列表不分男女/组合，不显示分类 tab
       const tabs = provider === 'qq' ? '' : tabRowHtml([['male', '男歌手'], ['female', '女歌手'], ['band', '组合']], type);
@@ -176,46 +182,57 @@ function bind(el, ctx) {
         <div class="song-row"><div class="body"><div class="name">${esc(a.name)}</div></div>
         <button class="btn" data-artist="${esc(a.id)}">进去</button></div>`).join('');
     } catch (err) {
+      if (mySeq !== subSeq) return;
       $('#subpage').innerHTML = `<div class="empty-tip">加载失败：${esc(String(err.message || err))}</div>`;
     }
   }
   async function songPage(title, fetchSongs) {
+    const mySeq = ++subSeq;
     $('#subpage').style.display = 'block';
     $('#subpage').innerHTML = '<div class="loading">加载中…</div>';
     try {
       const data = await fetchSongs();
+      if (mySeq !== subSeq) return;
       const songs = data.songs || [];
       $('#subpage').innerHTML = subhead(title) + (songs.length
         ? songs.map((s) => SONG_ROW(s)).join('')
         : '<div class="empty-tip">没有找到歌曲</div>');
     } catch (err) {
+      if (mySeq !== subSeq) return;
       $('#subpage').innerHTML = `<div class="empty-tip">加载失败：${esc(String(err.message || err))}</div>`;
     }
   }
   async function stylePage(cat) {
+    const mySeq = ++subSeq;
     $('#subpage').innerHTML = '<div class="loading">加载中…</div>';
     try {
       const data = await getJSON(`/api/style-playlists?cat=${encodeURIComponent(cat)}&provider=${provider}`);
+      if (mySeq !== subSeq) return;
       $('#subpage').innerHTML = subhead(cat) + (data.playlists || []).map((p) => `
         <div class="song-row"><div class="body"><div class="name">${esc(p.name)}</div></div>
         <button class="btn" data-playlist="${esc(p.id)}">进去</button></div>`).join('');
     } catch (err) {
+      if (mySeq !== subSeq) return;
       $('#subpage').innerHTML = `<div class="empty-tip">加载失败：${esc(String(err.message || err))}</div>`;
     }
   }
   async function letterList(letter) {
+    const mySeq = ++subSeq;
     $('#subpage').innerHTML = '<div class="loading">加载中…</div>';
     try {
       const data = await getJSON(`/api/artists?type=male&initial=${letter}&provider=${provider}`);
+      if (mySeq !== subSeq) return;
       const list = data.artists || [];
       $('#subpage').innerHTML = subhead(`拼音 ${letter}`) + list.map((a) => `
         <div class="song-row"><div class="body"><div class="name">${esc(a.name)}</div></div>
         <button class="btn" data-artist="${esc(a.id)}">进去</button></div>`).join('');
     } catch (err) {
+      if (mySeq !== subSeq) return;
       $('#subpage').innerHTML = `<div class="empty-tip">加载失败：${esc(String(err.message || err))}</div>`;
     }
   }
   async function openPage(page, arg = {}) {
+    const mySeq = ++subSeq;
     $('#subpage').style.display = 'block';
     $('#subpage').innerHTML = '<div class="loading">加载中…</div>';
     try {
@@ -234,11 +251,13 @@ function bind(el, ctx) {
           return;
         }
         const data = await getJSON(`/api/toplist?provider=${provider}`);
+        if (mySeq !== subSeq) return;
         $('#subpage').innerHTML = subhead('榜单') + renderListRows(data.lists || []);
         return;
       }
       if (page === 'styles') {
         const data = await getJSON(`/api/catlist?provider=${provider}`);
+        if (mySeq !== subSeq) return;
         $('#subpage').innerHTML = subhead('风格') + `<div class="grid">${(data.cats || []).map((c) =>
           `<div class="tile" data-style="${esc(c)}">${esc(c)}</div>`).join('')}</div>`;
         return;
@@ -249,6 +268,7 @@ function bind(el, ctx) {
         return;
       }
     } catch (err) {
+      if (mySeq !== subSeq) return;
       $('#subpage').innerHTML = `<div class="empty-tip">加载失败：${esc(String(err.message || err))}</div>`;
     }
   }

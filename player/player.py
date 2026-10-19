@@ -40,6 +40,7 @@ def main():
         log.error('player_config.json 里还没填 token（云端设备口令）')
         sys.exit(1)
     cfg['server'] = str(cfg['server']).replace('http://', 'ws://').replace('https://', 'wss://')
+    cfg['server'] = str(cfg['server']).rstrip('/')  # 尾斜杠会拼出 ws://host:3000//ws 连不上
     if not str(cfg['server']).endswith('/ws'):
         cfg['server'] += '/ws'   # 所有 scheme 统一补 /ws（Task 15 C2 修订：ws:// 直连也需补）
     # Windows 下自动找 libmpv dll（新版 mpv-dev 包叫 libmpv-2.dll，旧版叫 mpv-2.dll）

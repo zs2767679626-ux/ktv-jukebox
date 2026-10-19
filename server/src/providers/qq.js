@@ -18,6 +18,12 @@ function hash33(s, h = 0) {
   return 2147483647 & h;
 }
 
+// 网络响应防崩解析：QQ 接口偶发空体/非 JSON（反爬/网关抖动，实测 2026-09-29 连续 12 次
+// 空体让搜索全挂 500），失败当空数据处理，调用方 `?.` 链自然落到空结果
+function parseJSON(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
 function parseSetCookies(headers) {
   const out = {};
   const list =
@@ -137,7 +143,8 @@ function createQQ({ credential: initialCredential = '' } = {}) {
         needNewCode: 0, data: JSON.stringify(payload),
       },
     });
-    const json = JSON.parse(res.text);
+    const json = parseJSON(res.text);
+    if (!json) throw new Error('QQ 接口响应不是有效 JSON');
     const item = json?.req_0 ?? {};
     if ((item.code ?? 0) !== 0) throw new Error(`QQ 接口错误 ${item.code}`);
     return item.data ?? {};
@@ -166,7 +173,7 @@ function createQQ({ credential: initialCredential = '' } = {}) {
         ie: 'utf-8', oe: 'utf-8', aggr: 1, perpage: limit, catZhida: 1,
       },
     });
-    const data = JSON.parse(res.text);
+    const data = parseJSON(res.text);
     return (data?.data?.song?.list || []).map(normalize);
   }
 
@@ -231,7 +238,7 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     const res = await http('https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg', {
       params: { songmid: id, format: 'json', nobase64: 0, g_tk: DEFAULT_GTK, platform: 'yqq.json' },
     });
-    const data = JSON.parse(res.text);
+    const data = parseJSON(res.text);
     if (!data?.lyric) return null;
     return Buffer.from(data.lyric, 'base64').toString('utf-8');
   }
@@ -252,7 +259,7 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     const res = await http('https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg', {
       params: { topid: id, needNewCode: 1, uin: 0, tpl: 3, page: 'detail', type: 'top', format: 'json', platform: 'h5' },
     });
-    const data = JSON.parse(res.text);
+    const data = parseJSON(res.text);
     return (data?.songlist || []).map((s) => normalize(s.data || s));
   }
 
@@ -263,7 +270,7 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     const res = await http('https://c.y.qq.com/splcloud/fcgi-bin/fcg_get_diss_tag_conf.fcg', {
       params: { format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', platform: 'yqq.json', g_tk: DEFAULT_GTK, hostUin: 0, needNewCode: 0, notice: 0 },
     });
-    const data = JSON.parse(res.text);
+    const data = parseJSON(res.text);
     catMap = {};
     for (const grp of data?.data?.categories || []) {
       for (const item of grp?.items || []) {
@@ -284,7 +291,7 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     const res = await http('https://c.y.qq.com/splcloud/fcgi-bin/fcg_get_diss_by_tag.fcg', {
       params: { categoryId: id, sortId: 2, sin: 0, ein: limit - 1, format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', platform: 'yqq.json', g_tk: DEFAULT_GTK, hostUin: 0, needNewCode: 0, notice: 0 },
     });
-    const data = JSON.parse(res.text);
+    const data = parseJSON(res.text);
     return (data?.data?.list || []).map((p) => ({
       id: String(p.dissid ?? p.id ?? ''),
       name: p.dissname || p.name || '',
@@ -297,7 +304,7 @@ function createQQ({ credential: initialCredential = '' } = {}) {
       params: { type: 1, json: 1, utf8: 1, onlysong: 0, disstid: id, loginUin: 0, format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', platform: 'yqq.json', g_tk: DEFAULT_GTK, hostUin: 0, needNewCode: 0, notice: 0 },
       headers: { Referer: 'https://y.qq.com/n/yqq/playlist' },
     });
-    const data = JSON.parse(res.text);
+    const data = parseJSON(res.text);
     const cd = data?.cdlist?.[0] || {};
     return (cd.songlist || []).map(normalize);
   }
@@ -308,7 +315,7 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     const res = await http('https://c.y.qq.com/v8/fcg-bin/v8.fcg', {
       params: { channel: 'singer', page: 'list', key, pagesize: 60, pagenum: 1, format: 'json', platform: 'yqq.json', g_tk: DEFAULT_GTK, hostUin: 0, needNewCode: 0, notice: 0, inCharset: 'utf-8', outCharset: 'utf-8' },
     });
-    const data = JSON.parse(res.text);
+    const data = parseJSON(res.text);
     return (data?.data?.list || []).map((a) => ({
       id: a.Fsinger_mid,
       name: a.Fsinger_name,
@@ -436,7 +443,8 @@ function createQQ({ credential: initialCredential = '' } = {}) {
     cookie = '';
   }
 
-  // 当前登录态：null = 未登录；否则 { loggedIn, nickname, vipType }
+  // 当前登录态：null = 确定未登录；{ loggedIn, nickname, vipType } = 已登录；
+  // { unknown: true } = 网络故障查不了（凭证可能还在，别误导用户重扫）
   async function loginStatus() {
     const c = cred();
     if (!c || !c.musicid || !c.musickey) return null;
@@ -459,7 +467,7 @@ function createQQ({ credential: initialCredential = '' } = {}) {
       const vipType = u.vipIconFlag ? 1 : 0;
       return { loggedIn: true, nickname, vipType };
     } catch (e) {
-      return null;
+      return { unknown: true };
     }
   }
 

@@ -273,8 +273,8 @@ test('上游 404：历史记加载失败并自动接播下一首；全挂则安�
   });
 });
 
-test('最后一个流客户端断开：宽限冻结，超时后下线但不跳歌，重连续播当前歌', async () => {
-  await withStream({ routes: { 'http://A.mp3': music(0x41) } }, async ({ jukebox, history, streamCollector }) => {
+test('最后一个流客户端断开：立即摘交椅+宽限冻结，宽限期内点歌只排队不喂虚空，超时不跳歌', async () => {
+  await withStream({ graceMs: 300, routes: { 'http://A.mp3': music(0x41) } }, async ({ jukebox, history, streamCollector }) => {
     const col = streamCollector();
     await waitFor(() => jukebox.getState().playerOnline, 5000, '流端上线');
     jukebox.addToQueue(SONG('A'));
@@ -282,10 +282,16 @@ test('最后一个流客户端断开：宽限冻结，超时后下线但不跳�
     col.close();
     await waitFor(() => jukebox.getState().paused === true, 2000, '断线即冻结（暂停语义）');
     assert.ok(jukebox.getState().current, '宽限期内不跳歌');
-    assert.equal(jukebox.getState().playerOnline, true, '宽限期内播放交椅保留');
-    await waitFor(() => !jukebox.getState().playerOnline, 5000, '宽限超时下线');
+    assert.equal(jukebox.getState().playerOnline, false, '断线即摘播放交椅：网页端显示真实离线（旧实现宽限内虚报在线）');
+    // 宽限期内网页端点歌：只排队不自动开播（旧实现会开播喂进零客户端，手机回来时进度错位半首歌）
+    jukebox.addToQueue(SONG('B'));
+    assert.equal(jukebox.getState().current.song.title, 'A', '宽限期内点歌不顶掉当前歌');
+    assert.equal(jukebox.getState().queue.length, 1, '宽限期内点歌只排队');
+    assert.equal(jukebox.getState().queue[0].song.title, 'B');
+    assert.equal(jukebox.getState().paused, true, '点歌不解冻宽限冻结');
+    await waitFor(() => jukebox.getState().paused === false, 5000, '宽限超时清冻结');
     assert.equal(jukebox.getState().current.song.title, 'A', '超时也不跳歌');
-    assert.equal(jukebox.getState().paused, false, '下线后不残留暂停');
+    assert.equal(jukebox.getState().playerOnline, false);
     assert.equal(history.records[0].status, 'playing', '历史不记断线跳过');
     const col2 = streamCollector(); // 重连：重解析续播当前歌
     await waitFor(() => col2.buf().includes(0x41), 5000, '重连后当前歌 A 续播');

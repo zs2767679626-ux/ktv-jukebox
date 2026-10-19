@@ -83,6 +83,10 @@ function createJukebox(deps) {
   async function playItem(item) {
     state.current = item;
     item.started_at = now();
+    // 新歌新起点：上一首歌的暂停语义作废（跳过/失败接播都是「要听下一首」）。
+    // 不清理的话，暂停中切歌会让下一首带着 paused 出生——播放端出声而 UI 显示暂停，
+    // 且 play 之后的补发暂停（见下）会把 stale 暂停一路传染给之后每一首歌。
+    state.paused = false;
     pausedAt = null; // 新歌新起点：上一首歌的暂停窗口作废
     history.update(item.historyId, { status: 'playing', started_at: item.started_at });
     broadcast();
@@ -96,6 +100,8 @@ function createJukebox(deps) {
     }
     item.url = resolved.url;
     send({ action: 'play', url: resolved.url, song: item.song, volume: state.volume, muted: state.muted });
+    // 解析期间用户按了暂停（QQ 取链阶梯要 1~3 秒）：补发暂停保住语义，否则歌照样出声、UI 却显示暂停
+    if (state.paused) send({ action: 'pause' });
     broadcast();
   }
 

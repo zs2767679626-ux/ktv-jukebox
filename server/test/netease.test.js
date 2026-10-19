@@ -99,6 +99,13 @@ test('loginStatus：未登录返回 null；clearCookie 后返回 null', async ()
   assert.equal(await n.loginStatus(), null);
 });
 
+test('loginStatus 网络故障：返回 {unknown:true}，不误导用户重扫', async () => {
+  const n = createNetease(fakeApi({
+    login_status: async () => { throw new Error('ECONNREFUSED'); },
+  }), { cookie: 'MUSIC_U=abc' });
+  assert.deepEqual(await n.loginStatus(), { unknown: true });
+});
+
 test('lyric 为空对象时返回 null', async () => {
   const n = createNetease(fakeApi({ lyric: async () => ({ body: {} }) }));
   assert.equal(await n.lyric('1'), null);

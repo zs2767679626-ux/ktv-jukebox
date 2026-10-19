@@ -210,6 +210,36 @@ test('loginStatus：登录后返回昵称；凭证无效返回 null', async () =
   assert.equal(await q.loginStatus(), null);
 });
 
+test('loginStatus 网络故障：返回 {unknown:true}，不误导用户重扫', async () => {
+  await withFetch(async () => { throw new Error('ECONNREFUSED'); }, async () => {
+    const q = createQQ({ credential: JSON.stringify({ musicid: 123, musickey: 'MK' }) });
+    assert.deepEqual(await q.loginStatus(), { unknown: true });
+  });
+  // 响应体不是 JSON：同样按网络故障处理
+  await withFetch(async () => mockResponse({ body: '<html>502 Bad Gateway</html>' }), async () => {
+    const q = createQQ({ credential: JSON.stringify({ musicid: 123, musickey: 'MK' }) });
+    assert.deepEqual(await q.loginStatus(), { unknown: true });
+  });
+});
+
+test('search 响应不是 JSON：返回空结果而不是抛错（09-29 线上搜索连续 500 的根因）', async () => {
+  await withFetch(async () => mockResponse({ body: '' }), async () => {
+    const q = createQQ();
+    assert.deepEqual(await q.search('七里香'), []);
+  });
+  await withFetch(async () => mockResponse({ body: '<html>anti-bot</html>' }), async () => {
+    const q = createQQ();
+    assert.deepEqual(await q.search('七里香'), []);
+  });
+});
+
+test('musicu GET 响应不是 JSON：明确抛错而不是静默返回空榜单', async () => {
+  await withFetch(async () => mockResponse({ body: '<html>502</html>' }), async () => {
+    const q = createQQ();
+    await assert.rejects(() => q.toplists(), /响应不是有效 JSON/);
+  });
+});
+
 test('toplists/toplistSongs/playlistSongs 归一化', async () => {
   await withFetch(async (n, url) => {
     // GetAll 走 musicu 的 GET data= 形式
