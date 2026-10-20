@@ -237,6 +237,31 @@ test('网页端连接即收到初始 state 快照', async () => {
   });
 });
 
+test('网页端 ping → 服务器回 pong（手机端应用层心跳判僵死用）', async () => {
+  await withRealtime(async ({ ws, nextMsg }) => {
+    const web = await ws();
+    await nextMsg(web); // 排掉连接快照
+    web.send(JSON.stringify({ type: 'ping' }));
+    const m = await nextMsg(web);
+    assert.equal(m.type, 'pong');
+    web.close();
+  });
+});
+
+test('播放端发 ping 不回 pong（role=player 走 player 分支，不误触 web 指令）', async () => {
+  await withRealtime(async ({ ws }) => {
+    const player = await ws();
+    player.send(JSON.stringify({ type: 'player_hello', token: 'tok' }));
+    await sleep(30);
+    player.send(JSON.stringify({ type: 'ping' }));
+    let gotPong = false;
+    player.on('message', (d) => { if (JSON.parse(d).type === 'pong') gotPong = true; });
+    await sleep(300);
+    assert.equal(gotPong, false);
+    player.close();
+  });
+});
+
 test('mode_set 切换播放模式并广播，非法值忽略', async () => {
   await withRealtime(async ({ ws, nextMsg, nextState }) => {
     const web = await ws();

@@ -85,6 +85,8 @@ function createRealtime({ server, history, resolveUrl, isPlayerToken, onPlayerSl
         return;
       }
       switch (msg.type) {
+        // 应用层心跳应答：手机网页端靠 ping/pong 判僵死（half-open 下协议层 terminate 的 FIN 可能收不到）
+        case 'ping': ws.send(JSON.stringify({ type: 'pong' })); break;
         case 'play_request': jukebox.addToQueue(msg.song || { text: msg.text || '' }); break;
         case 'queue_top': jukebox.topQueue(msg.id); break;
         case 'queue_remove': jukebox.removeQueue(msg.id); break;
