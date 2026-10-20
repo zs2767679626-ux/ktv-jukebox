@@ -15,7 +15,7 @@ export function render(el, ctx) {
   if (el.__jukeboxPoint) return;
   el.__jukeboxPoint = true;
   el.innerHTML = `
-    <div class="card">
+    <div class="card" id="searchCard">
       <h2>点首歌</h2>
       <div class="prov-switch">
         <button class="prov" data-prov="netease">🎵 网易云</button>
@@ -23,7 +23,7 @@ export function render(el, ctx) {
       </div>
       <div class="search-box">
         <div class="input-row">
-          <input id="q" type="text" placeholder="歌名或歌手：周杰伦、晴天、海阔天空 Beyond…" autocomplete="off" />
+          <input id="q" type="text" placeholder="搜索歌名 / 歌手" autocomplete="off" />
         </div>
         <div class="candidates" id="candidates"></div>
       </div>

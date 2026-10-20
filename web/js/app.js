@@ -70,3 +70,6 @@ tabsEl.addEventListener('click', (e) => {
   tabsEl.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === btn));
 });
 document.body.dataset.view = 'point';
+
+// APP 壳内（UA 带 KTVPlayerApp 标记）：底部标签改顶部分段控件，避免与 APP 原生底栏叠双层
+if (/KTVPlayerApp/.test(navigator.userAgent)) document.body.classList.add('in-app');
