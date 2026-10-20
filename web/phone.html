@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0d0f14" />
+  <meta name="theme-color" content="#0b0e14" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <link rel="manifest" href="manifest.json" />
@@ -11,10 +11,14 @@
   <link rel="stylesheet" href="css/phone.css" />
 </head>
 <body>
+  <!-- 氛围背景：当前歌曲封面高斯模糊满屏铺底，暗色压光保证文字可读 -->
+  <div id="bgArt" class="hidden" aria-hidden="true"><img id="bgArtImg" alt="" /></div>
+
   <!-- 口令层：首次使用/口令错误时显示 -->
   <div id="tokenOverlay" class="overlay hidden">
     <div class="box">
-      <h1>🎤 手机播放端</h1>
+      <div class="glyph">🎤</div>
+      <h1>手机播放端</h1>
       <p class="dim">首次使用请输入播放端口令<br />（电脑上 player_config.json 文件里的 token 值）</p>
       <input id="tokenInput" type="text" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="64" placeholder="口令" />
       <button id="tokenOk" class="btn primary big">连接</button>
@@ -24,14 +28,16 @@
   <!-- 待激活层：轻触整屏任意位置即放行自动播放（手机浏览器手势策略，一次性） -->
   <div id="tapOverlay" class="overlay hidden">
     <div class="box">
-      <h1>🔊 音箱待激活，点击屏幕任意位置立即出声</h1>
-      <p class="dim">点一下即可，之后全程自动，锁屏也照常播放</p>
+      <div class="glyph pulse">🔊</div>
+      <h1>点一下屏幕，立即出声</h1>
+      <p class="dim">之后全程自动，锁屏也照常播放</p>
     </div>
   </div>
   <!-- 打断层：手机其他 App（网易云等）抢走声音、播放被打断时显示；整层可点，一点即换新源恢复 -->
   <div id="interruptOverlay" class="overlay hidden">
     <div class="box">
-      <h1>🔇 播放被打断了</h1>
+      <div class="glyph">🔇</div>
+      <h1>播放被打断了</h1>
       <p class="dim">点一下即可恢复播放<br />（若正在听别的 App，建议先暂停它）</p>
       <button id="resumeBtn" class="btn primary big">点击继续播放</button>
     </div>
@@ -40,13 +46,21 @@
   <main id="stage">
     <div id="topbar">
       <span id="status">连接中…</span>
+      <button id="diagBtn" class="chip">🔍 没声音？</button>
     </div>
     <!-- 接管横幅：声音在电脑端播放时的强提醒；点任意处重连夺回手机音箱 -->
     <div id="hijackBanner" class="hidden">
       <span>⚠️ 当前声音正在电脑端播放</span>
       <button id="retakeBtn" class="chip">📱 点击抢回手机音箱</button>
     </div>
-    <div id="cover"><div class="hole" id="coverEmoji">💿</div></div>
+
+    <div id="coverWrap">
+      <div id="cover">
+        <img id="coverImg" class="hidden" alt="" />
+        <div id="coverFallback"><span id="coverEmoji">💿</span></div>
+      </div>
+      <div id="glow"></div>
+    </div>
     <div id="nowTitle">还没有歌，去点一首吧</div>
     <div id="nowMeta"></div>
     <div id="progressWrap">
@@ -61,9 +75,19 @@
 
   <nav id="bottomBar">
     <button id="pauseBtn" class="btn big round" disabled>⏸</button>
-    <button id="skipBtn" class="btn big round" disabled>⏭</button>
+    <button id="skipBtn" class="btn round" disabled>⏭</button>
   </nav>
   <p id="romHint" class="hidden"><span class="dim">安卓若后台被杀：本页「添加到主屏幕」+ 电池设置放行后台</span> <button id="romHintOk" class="chip">知道了</button></p>
+
+  <!-- 声音自检：网页能查的全部查一遍，直接给结论（音量/蓝牙路由是系统级信息，网页看不到） -->
+  <div id="diagOverlay" class="overlay hidden">
+    <div class="box">
+      <div class="glyph">🔍</div>
+      <h1>声音自检</h1>
+      <p id="diagResult" class="dim" style="text-align:left">检查中…</p>
+      <button id="diagClose" class="btn primary big">知道了</button>
+    </div>
+  </div>
 
   <script src="js/phone-player.js"></script>
 </body>

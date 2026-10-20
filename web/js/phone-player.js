@@ -35,6 +35,7 @@
   let interrupted = false;       // 被别的 App 抢声音：已发服务器暂停冻结断点
   let pausedBeforeInterrupt = false; // 打断发生时服务器本来就暂停：恢复时不代用户解冻
   let lastState = null;
+  let lastPic = null;           // 当前封面 URL：换歌才换源，防状态广播刷屏时反复重载
   let serverOffset = 0;          // servertime 与本地时钟偏移
   let playingFired = false;      // 本机 <audio> 真实出声（'playing' 事件后置真）
   let stalled = false;           // 缓冲卡顿（waiting）：只冻结本机显示，不惊动服务器
@@ -43,20 +44,84 @@
   let frozenSongId = null;       // 冻结断点所属的歌：换歌必须作废（断线期间错过 current=null 广播时防跨歌残留）
 
   // ---------- 状态连接（网页身份）：收广播、发控制 ----------
+  // 网络波动自愈：half-open 时服务器 30s 协议层 ping 的 terminate 客户端可能收不到 FIN，
+  // 必须客户端判死——应用层心跳（20s ping，服务器回 pong；任何入站消息都算活着，
+  // 45s 无任何消息判僵死）+ 1s 起步指数退避重连 + 换网（navigator.connection 变化）立即重连。
+  const STATE_PING_MS = 20000;  // 心跳间隔
+  const STATE_DEAD_MS = 45000;  // 连续无入站消息判僵死上限
+  let stateRetry = 0;           // 重连退避计数（连上清零）
+  let stateDeadTimer = null;    // 僵死看门狗
+  let stateHeart = null;        // 心跳定时器
+  let stateEverOpened = false;  // 曾连上过：断线走快速退避；从未连上走 5s 慢速
+  let stateReconnectTimer = null;
+
   function connectState() {
     if (stateWs && (stateWs.readyState === 0 || stateWs.readyState === 1)) return;
+    clearTimeout(stateReconnectTimer);
+    clearTimeout(stateDeadTimer);
+    if (stateHeart) { clearInterval(stateHeart); stateHeart = null; }
     stateWs = new WebSocket(`ws://${location.host}/ws`);
+    stateWs.onopen = () => {
+      stateRetry = 0;
+      stateEverOpened = true;
+      armDeadWatch();
+      stateSend({ type: 'ping' }); // 打开即发一次，不必等第一个周期
+      stateHeart = setInterval(() => { stateSend({ type: 'ping' }); }, STATE_PING_MS);
+    };
     stateWs.onmessage = (e) => {
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
+      armDeadWatch(); // 任何入站消息都证明连接活着（播放中 state 广播本身就是高频心跳）
       if (msg.type === 'state') {
         if (msg.servertime) serverOffset = msg.servertime - Date.now();
         renderState(msg.state);
       }
     };
-    stateWs.onclose = () => { stateWs = null; setTimeout(connectState, 5000); };
-    stateWs.onerror = () => {};
+    stateWs.onclose = () => {
+      stateWs = null;
+      if (stateHeart) { clearInterval(stateHeart); stateHeart = null; }
+      clearTimeout(stateDeadTimer);
+      scheduleStateReconnect();
+    };
+    stateWs.onerror = () => { try { stateWs.close(); } catch {} }; // 统一走 onclose 重连路径
   }
+
+  /** 僵死看门狗：超时无任何入站消息（state 或 pong）→ 主动断开重连 */
+  function armDeadWatch() {
+    clearTimeout(stateDeadTimer);
+    stateDeadTimer = setTimeout(() => {
+      if (stateWs) { try { stateWs.close(); } catch {} }
+    }, STATE_DEAD_MS);
+  }
+
+  function scheduleStateReconnect() {
+    clearTimeout(stateReconnectTimer);
+    const delay = stateEverOpened
+        ? Math.min(1000 * Math.pow(2, Math.min(stateRetry, 4)), 10000)
+        : 5000;
+    if (stateEverOpened) stateRetry++;
+    setStatus(`网络波动，${Math.round(delay / 1000)} 秒后重连…`);
+    stateReconnectTimer = setTimeout(connectState, delay);
+  }
+
+  // 换网/网络恢复（安卓 Wi-Fi 抖动会触发多次 change）：立即重连，不必等心跳判死；
+  // 音频流卡死时也立即重试（重置退避，新网络从头快速试）
+  try {
+    const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (conn && conn.addEventListener) {
+      conn.addEventListener('change', () => {
+        if (stateWs) {
+          try { stateWs.close(); } catch {}   // 走 onclose → 快速退避重连
+        } else if (stateEverOpened) {
+          scheduleStateReconnect();           // 正在等重连：立即换新定时器
+        }
+        if (streamAttached && (stalled || audio.readyState < 4)) {
+          streamRetry = 0;
+          scheduleStreamRetry();
+        }
+      });
+    }
+  } catch { /* 老内核不支持 Network Information API，忽略 */ }
 
   function stateSend(obj) {
     if (stateWs && stateWs.readyState === 1) { stateWs.send(JSON.stringify(obj)); return true; }
@@ -147,9 +212,11 @@
     scheduleStreamRetry(); // 服务器关了流：退避重连
   });
   audio.addEventListener('error', () => {
+    // 任何加载失败一律退避重连：连接被掐断时 networkState 可能卡在 LOADING(2)，
+    // 旧判断（readyState<2 && networkState!==2）会永久停止重试——手机从此失声。
+    // 换源时旧请求的 error 也会走到这里，多排的一次重试会被 'playing' 清掉，无害。
     playingFired = false;
-    // 换源（重连）时旧请求的 error 不触发重试；真正失败时 readyState 归零且无新加载
-    if (audio.readyState < 2 && audio.networkState !== 2) scheduleStreamRetry();
+    scheduleStreamRetry();
   });
   audio.addEventListener('waiting', () => {
     // 缓冲卡顿：立刻冻结进度显示（不出声不走进度）；歌间间隙取流会有短暂 waiting，
@@ -213,6 +280,30 @@
   }
 
   // ---------- 界面 ----------
+  // 封面/氛围背景：有图用图（换歌才换源），无图或加载失败回落唱片
+  function applyCover(pic) {
+    const img = $('coverImg');
+    if (pic) {
+      img.classList.remove('hidden');
+      $('coverFallback').classList.add('hidden');
+      if (img.getAttribute('src') !== pic) img.src = pic;
+      const bg = $('bgArtImg');
+      if (bg.getAttribute('src') !== pic) bg.src = pic;
+      $('bgArt').classList.remove('hidden');
+    } else {
+      img.classList.add('hidden');
+      $('coverFallback').classList.remove('hidden');
+      $('bgArt').classList.add('hidden');
+    }
+  }
+  $('coverImg').addEventListener('error', () => {
+    // 只回落当前这张：换源中旧图被废止触发的 error（src 已是新图）直接忽略
+    if ($('coverImg').getAttribute('src') !== lastPic) return;
+    $('coverImg').classList.add('hidden');
+    $('coverFallback').classList.remove('hidden');
+    $('bgArt').classList.add('hidden');
+  });
+
   function renderState(st) {
     lastState = st;
     const cur = st.current;
@@ -226,13 +317,16 @@
       $('nowMeta').textContent = '';
       $('coverEmoji').textContent = '💿';
     }
+    // 封面与氛围背景：状态广播带图就铺图，无图回落唱片
+    const pic = cur && (cur.song.pic || '');
+    if (pic !== lastPic) { lastPic = pic; applyCover(pic); }
     // 队列预览
     const nextBox = $('nextBox');
     if (st.queue && st.queue.length) {
       $('nextList').innerHTML = st.queue.slice(0, 8).map((item) => {
         const s = item.song || {};
         const prov = s.provider === 'qq' ? '🎶' : '🎵';
-        return `<li>${prov} ${esc(s.title || s.text || '')}<span class="dim">${esc(s.artist || '')}</span></li>`;
+        return `<li><span class="txt">${prov} ${esc(s.title || s.text || '')}<span class="dim">${esc(s.artist || '')}</span></span></li>`;
       }).join('');
       nextBox.classList.remove('hidden');
     } else {
@@ -314,6 +408,44 @@
 
   function setStatus(text) { $('status').textContent = text; }
 
+  // ---------- 声音自检：网页能查的全部查一遍，直接给结论 ----------
+  // 音量/蓝牙路由是系统级信息，网页拿不到——能查的全绿时，问题必在手机设置上
+  function runSelfCheck() {
+    const lines = [];
+    if (streamAttached && audio.error) startRadio(); // 顺手修复：点自检即重挂流（加载失败态很可能已停摆）
+    const st = lastState;
+    if (!st) {
+      lines.push('⚠️ 连不上服务器：检查手机网络，确认和电脑连同一个 Wi-Fi');
+    } else {
+      lines.push('🖥 服务器：' + (st.playerOnline ? '播放端在线' : '⚠️ 无播放端')
+        + (st.streamActive ? '，电台模式' : '')
+        + (st.paused ? '，暂停中' : '，播放中'));
+    }
+    if (!streamAttached) {
+      lines.push('⚠️ 音频流没连上：网络问题或口令不对');
+    } else if (audio.error) {
+      lines.push('⚠️ 音频加载失败：网络问题，正在自动重连');
+    } else if (audio.paused) {
+      lines.push('⚠️ 音频被停住：点「点击继续播放」恢复');
+    } else if (!playingFired) {
+      lines.push('⚠️ 音频还没出声：点击屏幕任意位置激活');
+    } else {
+      lines.push('📻 音频在正常播放');
+    }
+    if (stalled) lines.push('⏳ 缓冲卡顿中：网络不稳定，进度已冻结');
+    lines.push('🔊 服务器共享音量：' + (st ? st.volume : '?'));
+    const allOk = st && streamAttached && !audio.error && !audio.paused && playingFired && !stalled;
+    if (allOk) {
+      lines.push('✅ 网页侧一切正常，歌曲确实在播放');
+      lines.push('→ 还没声音？问题在手机系统设置：');
+      lines.push('① 媒体音量：按侧键拉满（不是铃声音量）');
+      lines.push('② 蓝牙：可能连到了别的设备或没开机的设备——先关蓝牙，声音会立刻回手机喇叭');
+      lines.push('③ 静音键/勿扰模式（部分安卓手机会静音媒体）');
+    }
+    $('diagResult').innerHTML = lines.map(esc).join('<br />');
+    $('diagOverlay').classList.remove('hidden');
+  }
+
   // ---------- 口令 ----------
   function failToken() {
     localStorage.removeItem(TOKEN_KEY);
@@ -327,7 +459,10 @@
 
   // ---------- 切回前台自动恢复 ----------
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') tryAutoResume();
+    if (document.visibilityState !== 'visible') return;
+    tryAutoResume();
+    // 后台时看门狗定时器被系统节流，断线可能没被发现：切回前台立即补一次重连安排
+    if (!stateWs || stateWs.readyState > 1) scheduleStateReconnect();
   });
 
   // 恢复播放 = 换新源重连（被打断的 stale 流直接 play() 会卡死，必须重新挂流；&ts 防缓存）。
@@ -348,6 +483,8 @@
   }
 
   // ---------- 事件绑定与启动 ----------
+  $('diagBtn').addEventListener('click', runSelfCheck);
+  $('diagClose').addEventListener('click', () => $('diagOverlay').classList.add('hidden'));
   $('romHintOk').addEventListener('click', () => {
     localStorage.setItem(ROM_HINT_KEY, '1');
     $('romHint').classList.add('hidden');
